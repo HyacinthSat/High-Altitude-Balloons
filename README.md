@@ -2,6 +2,9 @@
 
 本仓库托管了风信子卫星项目下的一个气球计划的代码与电路设计。
 
+![image](https://github.com/user-attachments/assets/690048eb-9224-47ac-8bea-609d323d8b61)
+
+
 ## 目录  
 
 - [Ground Station | 地面站](https://github.com/HyacinthSat/High-Altitude-Balloons/tree/main/Ground%20Station)
