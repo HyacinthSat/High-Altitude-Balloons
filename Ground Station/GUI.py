@@ -1,12 +1,14 @@
 """
 GUI program for Balloon Ground Station.
 
-This program is a graphical user interface implemented using PyQt, 
-mainly used to obtain software running parameters.
+This program is a graphical user interface implemented using PyQt,
+It connects to and manages the receiver serial port to acquire telemetry and image data from high-altitude balloons.
+The program real-time parses and displays the balloon's GPS information, integrates map tracking, and features SSDV image downlink capabilities,
+providing a comprehensive ground monitoring and data visualization solution for HAB missions.
 
 Author: BG7ZDQ
-Date: 2025/05/20
-Version: 0.0.0 formal_edition
+Date: 2025/05/25
+Version: 0.0.1
 LICENSE: GNU General Public License v3.0
 """
 
@@ -15,12 +17,12 @@ import os
 import sys
 import serial
 import subprocess
-from datetime import datetime
 from serial.tools import list_ports
 from PyQt6.QtGui import QIcon, QPixmap
+from datetime import datetime, timedelta, timezone
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import Qt, QUrl, QTimer, QThread, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QPlainTextEdit, QMessageBox, QComboBox
+from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QPlainTextEdit, QMessageBox, QComboBox, QLineEdit, QFormLayout
 
 # 禁用 GPU 加速
 os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu --disable-software-rasterizer'
@@ -31,6 +33,7 @@ common_style = 'color: #555555; font-family: 微软雅黑; font: bold 12pt;'
 Common_button_style = 'QPushButton {background-color: #3498db; color: #ffffff; border-radius: 5px; padding: 6px; font-size: 12px;} QPushButton:hover {background-color: #2980b9;} QPushButton:pressed {background-color: #21618c;}'
 TextEdit_style = 'QPlainTextEdit {background-color: #FFFFFF; color: #3063AB; border: 1px solid #3498db; border-radius: 5px; padding: 1px; font-family: 微软雅黑; font-size: 12px;}'
 ComboBox_style = '''QComboBox {background-color: #ffffff; border: 1px solid #3498db; border-radius: 3px; padding: 2px; min-width: 6em; font: bold 10pt "微软雅黑"; color: #3063AB;}QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 20px; border-left: 1px solid #3498db;}QComboBox::down-arrow { image: url(UI/arrow.svg); width: 10px; height: 10px;}QComboBox QAbstractItemView { background: #ffffff; selection-background-color: #89CFF0; selection-color: #000000; border: 1px solid #3498db; outline: 0; font: 10pt "微软雅黑";}'''
+LineEdit_style = 'QLineEdit { background-color: #FFFFFF; color: #3063AB; border: 1px solid #3498db; border-radius: 5px; padding: 1px; font-family: 微软雅黑; font-size: 12px; }'
 
 # 程序主窗口
 class GUI(QWidget):
@@ -47,24 +50,25 @@ class GUI(QWidget):
         self.setWindowTitle('气球地面站：The Ground Station Software of HAB')
         self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
 
+        self.SET_window = None 
         self.receiver_serial_thread = None
 
-        # 地面站位置
-        self.local_lat = 0
-        self.local_lng = 0
-        self.local_alt = 0
+        # 地面站信息
+        self.callsign  = 'BG7ZDQ'
+        self.local_lat = 20.053791
+        self.local_lng = 110.32786
+        self.local_alt = 41
 
-        # 气球位置
+        # 气球信息
         self.balloon_lat = 0
         self.balloon_lng = 0
         self.balloon_alt = 0
+        self.balloon_time = "2025-05-25T00:00:00Z"
 
         # 图像编号
-        self.img_num = -1
+        self.filename  = ''
+        self.img_num   = -1
         self.frame_num = 1
-
-        # 当前文件名
-        self.filename = ''
 
         # 设置主程序图标
         global waiting, correct, warning, error, data, hourglass, camera, img, geo
@@ -140,7 +144,7 @@ class GUI(QWidget):
         # 轨迹地图嵌入
         self.map_view = QWebEngineView(self)
         self.map_view.setGeometry(40, 130, 320, 240)
-        self.map_view.setUrl(QUrl("https://hab.satellites.ac.cn/map"))
+        self.map_view.setUrl(QUrl("http://hab.satellites.ac.cn/map"))
 
         self.GPS_LAT_label = QLabel(self)
         self.GPS_LAT_label.setText("经度: ")
@@ -295,9 +299,14 @@ class GUI(QWidget):
         self.DEBUG_INFO_label.move(420, 390)
         self.DEBUG_INFO_label.setStyleSheet(title_style)
 
+        self.SET_button = QPushButton("设置", self)
+        self.SET_button.setGeometry(500, 387, 50, 27)
+        self.SET_button.setStyleSheet(Common_button_style)
+        self.SET_button.clicked.connect(self.SET)
+
         self.DEBUG_output = QPlainTextEdit(self)
         self.DEBUG_output.setReadOnly(True)
-        self.DEBUG_output.setGeometry(420, 415, 330, 70)
+        self.DEBUG_output.setGeometry(420, 420, 330, 65)
         self.DEBUG_output.setStyleSheet(TextEdit_style)
 
         # 串口刷新定时器
@@ -323,7 +332,7 @@ class GUI(QWidget):
 
             self.receiver_serial_thread = SerialReader(port_name, baudrate=9600)
             self.receiver_serial_thread.data_received.connect(self.handle_serial_data)
-            self.receiver_serial_thread.disconnected.connect(self.on_serial_disconnected) # 添加这行连接
+            self.receiver_serial_thread.disconnected.connect(self.on_serial_disconnected)
             self.receiver_serial_thread.start()
 
             if self.receiver_serial_thread and self.receiver_serial_thread.isRunning(): # 简单的检查
@@ -365,19 +374,21 @@ class GUI(QWidget):
             self.Frame_type_output.adjustSize()
             try:
                 fields = text[2:].split(",")
-                if len(fields) >= 6:
-                    self.balloon_lat = float(fields[0])
-                    self.balloon_lng = float(fields[1])
-                    self.balloon_alt = float(fields[2])
-                    self.balloon_spd = float(fields[3])
-                    self.balloon_sats = int(fields[4])
-                    self.balloon_heading = float(fields[5])
-
+                if len(fields) >= 9:
+                    self.balloon_time = fields[2]
+                    self.balloon_lat = float(fields[3])
+                    self.balloon_lng = float(fields[4])
+                    self.balloon_alt = float(fields[5])
+                    self.balloon_spd = float(fields[6])
+                    self.balloon_sats = int(fields[7])
+                    self.balloon_heading = float(fields[8])
+                    
                     # 更新地图
                     self.update_map_position()
                     self.debug_info(f"GPS 数据已更新")
 
                     # 更新标签显示
+                    self.GPS_status_icon.setPixmap(correct)
                     self.GPS_label.setText(f"GPS 数据：就绪")
                     self.GPS_label.adjustSize()
                     self.GPS_LAT_NUM.setText(f"{self.balloon_lat:.6f}")
@@ -397,6 +408,19 @@ class GUI(QWidget):
                     self.rotator_el_NUM.setText("---.--")
                     self.rotator_el_NUM.adjustSize()
 
+                    # SondeHub 存在玄学问题，接收时间不得大于气球时间
+                    now_utc = datetime.now(timezone.utc)
+                    adjusted_time = now_utc + timedelta(seconds=30)
+                    formatted = adjusted_time.strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
+
+                    # 调用 SondeHub API接口
+                    # sondehub_dev.exe <上传者呼号> <接收时间> <球上时间> <经度> <纬度> <高度> <航向角> <GPS卫星数> <地面站经度> <地面站纬度> <地面站高度>
+                    try:
+                        subprocess.Popen(["./sondehub", f"{self.callsign}", f"{formatted}", f"{self.balloon_time}", f"{self.balloon_lng}", f"{self.balloon_lat}", f"{self.balloon_alt}", f"{self.balloon_heading}", f"{self.balloon_sats}", f"{self.local_lng}", f"{self.local_lat}", f"{self.local_alt}"])
+                    except Exception as e:
+                        self.debug_info(f"SondeHub上传失败: {e}")
+                        return False
+                    
                     return
                 else:
                     self.debug_info("遥测数据字段不足，解析失败")
@@ -435,7 +459,8 @@ class GUI(QWidget):
         elif "SSDV Encoding: image" in text:
             self.debug_info(f"正在编码第 {self.img_num + 1} 张图片")
         elif "SSDV End" in text:
-            self.debug_info(f"第 {self.img_num} 张图片编码完成")
+            self.debug_info(f"第 {self.img_num} 张图片接收完成")
+            self.debug_info(f"共收到 {self.frame_num} 帧")
         else:
             self.debug_info(f"收到信息：{text}")
 
@@ -494,6 +519,10 @@ class GUI(QWidget):
         # 提取帧
         frame = self.buffer[start:start + frame_len]
 
+        # 状态变更
+        self.Camera_status_icon.setPixmap(correct)
+        self.init_status_icon.setPixmap(correct)
+
         # 检查图像编号是否变化
         try:
             current_img_num = frame[6]
@@ -546,6 +575,10 @@ class GUI(QWidget):
     # 连接旋转器串口
     def Connect_rotator_COM(self):
         self.debug_info("旋转器功能尚未实现")
+        if (self.local_alt == 0 and self.local_lat == 0 and self.local_lng == 0):
+            self.debug_info("请先输入本地经纬度")
+            self.SET()
+            return
 
     # 刷新串口信息
     def update_serial_ports(self):
@@ -610,7 +643,7 @@ class GUI(QWidget):
 
     # 更新地图位置
     def update_map_position(self):
-        js_code = f"updatePosition({self.balloon_lat}, {self.balloon_lng});"
+        js_code = f"updatePosition({self.balloon_lat}, {self.balloon_lng}, {self.local_lat}, {self.local_lng});"
         self.map_view.page().runJavaScript(js_code)
 
     # 窗口关闭事件处理
@@ -620,6 +653,21 @@ class GUI(QWidget):
             event.accept()
         else:
             event.ignore()
+
+    # 设置窗口
+    def SET(self):
+        if self.SET_window is None:
+            self.SET_window = SET_Windows(self.callsign, self.local_lat, self.local_lng, self.local_alt) 
+            self.SET_window.coords_updated.connect(self.update_local_coords)
+        self.SET_window.show()
+
+    # 更新地面站坐标
+    def update_local_coords(self, Callsign, lat, lng, alt):
+        self.callsign = Callsign
+        self.local_lat = lat
+        self.local_lng = lng
+        self.local_alt = alt
+        self.debug_info(f"地面站坐标已更改")
 
 # 串口连接
 class SerialReader(QThread):
@@ -638,6 +686,7 @@ class SerialReader(QThread):
             self.serial = serial.Serial(self.port_name, self.baudrate, timeout=1)
         except serial.SerialException as e:
             print(f"[错误] 串口打开失败：{e}")
+            QMessageBox.warning(self, "警告：串口打开失败", f"无法打开串口 {self.port_name}，请检查连接。")
             self.disconnected.emit()
             return
 
@@ -656,6 +705,7 @@ class SerialReader(QThread):
                 break
             except Exception as e:
                 print(f"[错误] 串口读取异常：{e}")
+                QMessageBox.warning(self, "警告：串口读取异常", f"读取串口 {self.port_name} 数据时发生错误。")
                 continue
 
     def stop(self):
@@ -664,6 +714,100 @@ class SerialReader(QThread):
             self.serial.close()
         self.quit()
         self.wait()
+
+class SET_Windows(QWidget):
+    # 定义一个信号，用于在坐标和呼号更新后发射给主窗口
+    # 信号参数现在包括呼号 (str)
+    coords_updated = pyqtSignal(str, float, float, float)
+
+    def __init__(self, callsign, current_lat, current_lng, current_alt):
+        super().__init__()
+
+        # 窗口属性
+        icon = QIcon('UI/logo.ico')
+        self.setWindowIcon(icon)
+        self.resize(200, 250)
+        self.setFixedSize(220, 280) # 适当调整窗口大小以容纳新的输入框
+        self.setWindowTitle('设置')
+        self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
+
+        # 存储当前的呼号和坐标
+        self.current_callsign = callsign
+        self.current_lat = current_lat
+        self.current_lng = current_lng
+        self.current_alt = current_alt
+
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QFormLayout()
+
+        # 呼号输入框
+        self.callsign_input = QLineEdit(self)
+        self.callsign_input.setStyleSheet(LineEdit_style)
+        self.callsign_input.setText(self.current_callsign)
+        layout.addRow("地面站呼号:", self.callsign_input)
+
+        self.lat_input = QLineEdit(self)
+        self.lat_input.setStyleSheet(LineEdit_style)
+        self.lat_input.setText(str(self.current_lat))
+        layout.addRow("地面站纬度:", self.lat_input)
+
+        self.lng_input = QLineEdit(self)
+        self.lng_input.setStyleSheet(LineEdit_style)
+        self.lng_input.setText(str(self.current_lng))
+        layout.addRow("地面站经度:", self.lng_input)
+
+        self.alt_input = QLineEdit(self)
+        self.alt_input.setStyleSheet(LineEdit_style)
+        self.alt_input.setText(str(self.current_alt))
+        layout.addRow("地面站高度:", self.alt_input)
+
+        self.save_button = QPushButton("保存", self)
+        self.save_button.setStyleSheet(Common_button_style)
+        self.save_button.clicked.connect(self.save_coords)
+        layout.addRow(self.save_button)
+
+        self.setLayout(layout)
+
+    def save_coords(self):
+        try:
+            new_callsign = self.callsign_input.text().strip()
+            new_lat = float(self.lat_input.text())
+            new_lng = float(self.lng_input.text())
+            new_alt = float(self.alt_input.text())
+
+            # 验证呼号是否为空
+            if not new_callsign:
+                QMessageBox.warning(self, "输入错误", "呼号不能为空。")
+                return
+
+            # 验证经纬度范围
+            if not (-90 <= new_lat <= 90):
+                QMessageBox.warning(self, "输入错误", "纬度必须在 -90 到 90 之间。")
+                return
+            if not (-180 <= new_lng <= 180):
+                QMessageBox.warning(self, "输入错误", "经度必须在 -180 到 180 之间。")
+                return
+            if not (-12263 <= new_alt <= 8848.86):
+                QMessageBox.warning(self, "输入错误", "高度必须在 -12263 到 8848.86 之间。")
+                return
+
+            self.current_callsign = new_callsign
+            self.current_lat = new_lat
+            self.current_lng = new_lng
+            self.current_alt = new_alt
+            
+            # 发射信号，通知主窗口更新呼号和坐标
+            self.coords_updated.emit(self.current_callsign, self.current_lat, self.current_lng, self.current_alt)
+            # 保存后关闭设置窗口
+            self.close()
+
+        except ValueError:
+            QMessageBox.warning(self, "输入错误", "请确保经度、纬度、高度输入为有效的数字。")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存时发生未知错误: {e}")
+
 
 # 主事件
 if __name__ == '__main__':
