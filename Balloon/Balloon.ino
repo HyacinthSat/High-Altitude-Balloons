@@ -12,15 +12,17 @@
 #define SSDV_SIZE_NOFEC 256             // 标准SSDV包大小 (无FEC)
 #define CAM_CALIBRATE 10                // 摄像头校准次数
 
-// GPS
+// GPS 定义
 HardwareSerial GPS_Serial(2);
 char gpsMessage[256];
+char gps_time[21];
 char tempStr[40];
 NMEAGPS gps;
 gps_fix fix;
 
 // 初始化状态
 bool initialization_status = true;
+bool init1 = false;
 
 // SSDV 相关全局变量
 ssdv_t ssdv;                                 // SSDV编码器状态结构体
@@ -28,36 +30,40 @@ uint8_t imageID = 0;                         // 图像计数器
 uint8_t ssdv_feed_buff[SSDV_IMG_BUFF_SIZE];  // 从摄像头读取数据到此缓冲区，再喂给SSDV
 uint8_t ssdv_out_buff[SSDV_OUT_BUFF_SIZE];   // SSDV编码器生成的包会存放在这里
 
+// 遥测帧计数器
+uint16_t frame_counter = 0;
+
 // 告警提醒
 void happen_error() {
-  for(int i = 0; i < 20; i++) {
-    digitalWrite(ALERTS, LOW);
-    delay(200);
-    digitalWrite(ALERTS, HIGH);
-    delay(200);
+  if (!init) {
+    for(int i = 0; i < 3; i++) {
+      digitalWrite(BUZZ, HIGH);
+      delay(500);
+      digitalWrite(BUZZ, LOW);
+      delay(500);
+    }
+    initialization_status = false;
   }
-  initialization_status = false;
 }
 
 // 就绪提醒
 void ready_reminder() {
-  for(int i = 0; i < 2; i++) {
-    digitalWrite(ALERTS, LOW);
-    delay(100);
-    digitalWrite(ALERTS, HIGH);
-    delay(50);
-  }
+  digitalWrite(BUZZ, HIGH);
+  delay(100);
+  digitalWrite(BUZZ, LOW);
 }
 
 // 初始化就绪检查
 void initialize_check() {
   delay(2000);
   if(initialization_status) {
+    init1 = true;
     ready_reminder();
   } else {
     Serial.printf("** Fail - Initialization Fail! **");
-    happen_error();
-    digitalWrite(ALERTS, LOW);
+    digitalWrite(BUZZ, HIGH);
+    delay(2000);
+    digitalWrite(BUZZ, LOW);
     esp_restart();
   }
 }
@@ -115,26 +121,50 @@ void camera_calibrate() {
   Serial.printf("** OK - Camera Calibrate Success! **");
 }
 
-// 构建类 PITS 格式的数据帧
+// 构建类 UKHAS 格式的数据帧
+// $$CALLSIGN,frame_counter,HH:MM:SS,latitude,longitude,altitude,other,fields
 void buildPITSMessage(const gps_fix &fix) {
+
+  // 先拼装标准格式的时间
+  snprintf(gps_time, sizeof(gps_time),
+    "%04d-%02d-%02dT%02d:%02d:%02dZ",
+    fix.dateTime.year + 2000,
+    fix.dateTime.month,
+    fix.dateTime.day + 18, // 此处有 GPS 玄学问题，有待研究
+    fix.dateTime.hours,
+    fix.dateTime.minutes,
+    fix.dateTime.seconds
+  );
+
+  // 再拼装遥测字符串
   snprintf(gpsMessage, sizeof(gpsMessage),
-    "$$%.6f,%.6f,%.1f,%.1f,%d,%.2f",
+    "$$%s,%d,%s,%.6f,%.6f,%.2f,%.2f,%d,%.2f",
+    SSDV_CALLSIGN,     // 呼号
+    frame_counter,     // 帧数
+    gps_time,          // 时间
     fix.latitude(),    // 纬度
     fix.longitude(),   // 经度
-    fix.altitude(),    // 高度（米）
-    fix.speed_kph(),   // 速度（km/h）
-    fix.satellites,    // 可见卫星数
+    fix.altitude(),    // 高度
+    fix.speed_kph(),   // 速度
+    fix.satellites,    // 卫星数
     fix.heading()      // 航向角
   );
+
+  frame_counter += 1;
+
+  // 发送
+  delay(25);
   Serial.println(gpsMessage);
+  delay(25);
 }
 
 // GPS 初始化
-void gps_init(unsigned long timeout_ms = 180000) {
+void gps_init(unsigned long timeout_ms = 200000) {
   delay(2000);
   Serial.println("** Wait - GPS Initializing! **");
   unsigned long start = millis();
 
+  // 调试用
   //Serial.println("** OK - GPS init Completed! **");
   //return;
   
@@ -147,7 +177,7 @@ void gps_init(unsigned long timeout_ms = 180000) {
         return;
       }
     }
-    delay(100); // 可选：减少 CPU 占用
+    delay(100);
   }
 
   Serial.println("** Fail - GPS init Failed! **");
@@ -155,9 +185,10 @@ void gps_init(unsigned long timeout_ms = 180000) {
 }
 
 // 发送有效 GPS 数据
-void tx_gps_info(unsigned long timeout_ms = 15000) {
+void tx_gps_info(unsigned long timeout_ms = 5000) {
   unsigned long start = millis();
 
+  // 调试用
   //return;
 
   while (millis() - start < timeout_ms) {
@@ -165,14 +196,15 @@ void tx_gps_info(unsigned long timeout_ms = 15000) {
       fix = gps.read();
 
       if (fix.valid.location && fix.valid.altitude && fix.valid.satellites) {
-        buildPITSMessage(fix); // 注意传入 fix
+        buildPITSMessage(fix);
         Serial.printf("** %s **\n", gpsMessage);
-        delay(2000);
+        delay(25);
         return;
       }
     }
   }
 
+  happen_error();
   Serial.println("** Fail - GPS failure! **");
 }
 
@@ -181,7 +213,7 @@ void tx_gps_info(unsigned long timeout_ms = 15000) {
 int read_camera_buffer_for_ssdv(uint8_t *buffer, int numBytes, camera_fb_t *fb, int fbIndex) {
 
   int bufSize = 0;
-  // have we reached past end of imagebuffer
+  // 检查是否到达图像缓冲区的末尾
   if((fbIndex + numBytes ) < fb->len){
   
     bufSize = numBytes;
@@ -194,63 +226,66 @@ int read_camera_buffer_for_ssdv(uint8_t *buffer, int numBytes, camera_fb_t *fb, 
   return bufSize;
 }
 
-// 处理并编码 SSDV
-void process_ssdv(camera_fb_t *fb){
+// 调制 SSDV 数据包
+void process_ssdv(camera_fb_t *fb) {
 
   // 定义函数逻辑所用变量
-  int index = 0, c = 0, ssdvPacketCount = 0;
+  int index = 0, c = 0, PacketCount = 0;
 
   // 图像编号
-  Serial.printf("** SSDV Encoding: image %u **", imageID);
+  Serial.printf("** SSDV Encoding: image %u **\n", imageID);
 
-  // 初始化 SSDV 配置结构，无 FEC 模式，质量等级 4，每帧长 256 字节
+  // 初始化 SSDV 配置结构，无 FEC 模式，质量等级 2，每帧长 256 字节
   ssdv_enc_init(&ssdv, SSDV_TYPE_NOFEC, SSDV_CALLSIGN, imageID++, 2, 256);
+
   // 设置 SSDV 的输出数据包缓冲区
   ssdv_enc_set_buffer(&ssdv, ssdv_out_buff);
 
   // 大循环结构
-  while(true){
-    
+  while (true) {
+
     // 当状态为 SSDV_FEED_ME 时投喂数据
-    while((c = ssdv_enc_get_packet(&ssdv)) == SSDV_FEED_ME)
-    {
-        // 从图像缓冲区读取数据包中的字节数
-        index += read_camera_buffer_for_ssdv(ssdv_feed_buff, SSDV_IMG_BUFF_SIZE, fb, index);
-        // 投喂
-        ssdv_enc_feed(&ssdv, ssdv_feed_buff, SSDV_IMG_BUFF_SIZE);
-    }
-    
-    // 当状态为 SSDV_EOI 时，图像编码完成。
-    if(c == SSDV_EOI)
-    {
-        Serial.printf("** OK - SSDV End. **");
-        break;
-    }
-    // 当状态不为 SSDV OK 时证明发生错误
-    else if(c != SSDV_OK)
-    {
-        Serial.printf("** Fail - SSDV Error: Code %d **", c);
-        break;
+    while ((c = ssdv_enc_get_packet(&ssdv)) == SSDV_FEED_ME) {
+      index += read_camera_buffer_for_ssdv(ssdv_feed_buff, SSDV_IMG_BUFF_SIZE, fb, index);
+      ssdv_enc_feed(&ssdv, ssdv_feed_buff, SSDV_IMG_BUFF_SIZE);
     }
 
-    // 发送数据
-    delay(100);
+    // 图像编码完成
+    if (c == SSDV_EOI) {
+      Serial.println("** OK - SSDV End. **");
+      break;
+    }
+    // 出错处理
+    else if (c != SSDV_OK) {
+      Serial.printf("** Fail - SSDV Error: Code %d **\n", c);
+      break;
+    }
+
+    // 发送数据包
+    delay(25);
     Serial.write(ssdv_out_buff, 256);
-    delay(100);
+    delay(25);
+
+    // 每发送 20 个包调用一次遥测帧构建
+    if (PacketCount % 20 == 0) {
+      tx_gps_info();
+    }
+    PacketCount++;
   }
 }
 
 // 上电初始化
 void setup() {
   delay(5000);
-  pinMode(ALERTS, OUTPUT);                     // 配置告警IO
-  digitalWrite(ALERTS, HIGH);                  // 初始化为高电平
+  pinMode(BUZZ, OUTPUT);                       // 配置告警IO
+  digitalWrite(BUZZ, LOW);                     // 初始化为低电平
   Serial.begin(9600);                          // 设置主串口波特率
   GPS_Serial.begin(9600, SERIAL_8N1, 15, -1);  // 设置 GPS 串口
   Serial.printf("** Wait - Booting... **");    // 自检指示1
   setup_camera();                              // 摄像头初始化
   camera_calibrate();                          // 摄像头校准
   gps_init();                                  // GPS 校准
+  tx_gps_info();                               // GPS 传输
   initialize_check();                          // 初始化就绪检查
   Serial.printf("** OK - Init Done! **");      // 自检指示2
 }
@@ -258,7 +293,6 @@ void setup() {
 // 主入口函数
 void loop() {
 
-  // delay(30000);
   tx_gps_info();
 
   // 拍摄图片并执行检查
@@ -278,4 +312,5 @@ void loop() {
   esp_camera_fb_return(fb);
 
   tx_gps_info();
+  delay(30000);
 }

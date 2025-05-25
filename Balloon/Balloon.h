@@ -17,4 +17,4 @@
 #define RESET_GPIO_NUM -1
 
 // 告警指示IO
-#define ALERTS 33
+#define BUZZ 12
