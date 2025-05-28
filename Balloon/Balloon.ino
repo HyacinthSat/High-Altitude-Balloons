@@ -1,49 +1,63 @@
-#include "HardwareSerial.h"
-#include "esp_camera.h"
-#include "Balloon.h"
-#include "NMEAGPS.h"
-#include "GPSfix.h"
-#include "ssdv.h"
-
-// 预定义
+// 宏定义
 #define SSDV_CALLSIGN "BG7ZDQ"          // 呼号
 #define SSDV_IMG_BUFF_SIZE 128          // 喂给SSDV编码器的缓冲区大小
 #define SSDV_OUT_BUFF_SIZE 256          // 用于存放编码后SSDV数据包的缓冲区
 #define SSDV_SIZE_NOFEC 256             // 标准SSDV包大小 (无FEC)
 #define CAM_CALIBRATE 10                // 摄像头校准次数
+#define DEV_STATE false                  // 开发状态
 
-// GPS 定义
+// 头文件
+#include "Arduino.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
+#include "esp_camera.h"
+#include "TinyGPS++.h"
+#include "Balloon.h"
+#include "ssdv.h"
+
+// GPS 相关全局变量
 HardwareSerial GPS_Serial(2);
 char gpsMessage[256];
 char gps_time[21];
 char tempStr[40];
-NMEAGPS gps;
-gps_fix fix;
-
-// 初始化状态
-bool initialization_status = true;
-bool init1 = false;
+TinyGPSPlus gps;
 
 // SSDV 相关全局变量
 ssdv_t ssdv;                                 // SSDV编码器状态结构体
 uint8_t imageID = 0;                         // 图像计数器
+bool SSDV_State = false;                       // SSDV 状态
 uint8_t ssdv_feed_buff[SSDV_IMG_BUFF_SIZE];  // 从摄像头读取数据到此缓冲区，再喂给SSDV
 uint8_t ssdv_out_buff[SSDV_OUT_BUFF_SIZE];   // SSDV编码器生成的包会存放在这里
 
-// 遥测帧计数器
-uint16_t frame_counter = 0;
+// FreeRTOS 相关全局变量
+TaskHandle_t xRelayTaskHandle = NULL;
+QueueHandle_t xRelayQueue = NULL;
 
-// 告警提醒
-void happen_error() {
-  if (!init) {
-    for(int i = 0; i < 3; i++) {
-      digitalWrite(BUZZ, HIGH);
-      delay(500);
-      digitalWrite(BUZZ, LOW);
-      delay(500);
-    }
-    initialization_status = false;
+// 初始化状态
+bool Initialization_Status = true;
+
+// 调试函数
+bool DEV_Pass(const char* function) {
+  if (strcmp(function, "GPS_Initialize") == 0 && DEV_STATE) {
+    Serial.println("** OK - GPS init Completed! **");
+    delay(25);
+    return true;
+  } else if (strcmp(function, "GPS_Transmit") == 0 && DEV_STATE) {
+    return true;
   }
+  return false;
+}
+
+// 告警提醒函数
+void Happen_Error() {
+  for(int i = 0; i < 3; i++) {
+    digitalWrite(BUZZ, HIGH);
+    delay(50);
+    digitalWrite(BUZZ, LOW);
+    delay(50);
+  }
+  Initialization_Status = false;
 }
 
 // 就绪提醒
@@ -54,10 +68,9 @@ void ready_reminder() {
 }
 
 // 初始化就绪检查
-void initialize_check() {
+void Initialize_Check() {
   delay(2000);
-  if(initialization_status) {
-    init1 = true;
+  if(Initialization_Status) {
     ready_reminder();
   } else {
     Serial.printf("** Fail - Initialization Fail! **");
@@ -69,7 +82,7 @@ void initialize_check() {
 }
 
 // 摄像头初始化
-void setup_camera() {
+void Setup_Camera() {
   delay(2000);
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
@@ -94,25 +107,25 @@ void setup_camera() {
   config.pixel_format = PIXFORMAT_JPEG;
   
   config.frame_size   = FRAMESIZE_VGA;
-  config.jpeg_quality = 8;
+  config.jpeg_quality = 5;
   config.fb_count     = 1;
   config.grab_mode    = CAMERA_GRAB_LATEST;
 
   if (esp_camera_init(&config) != ESP_OK) {
     Serial.printf("** Fail - Camera init Failed! **");
-    happen_error();
+    Happen_Error();
   }
 }
 
 // 拍摄多次进行摄像头校准(自动曝光/白平衡稳定)
-void camera_calibrate() {
+void Camera_Calibrate() {
   delay(2000);
   Serial.printf("** Wait - Calibrating camera... **");
   for(int i = 0; i < CAM_CALIBRATE; i++) {
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) {
         Serial.printf("** Fail - Calibrate Failed! **");
-        happen_error();
+        Happen_Error();
         return;
     }
     delay(200);
@@ -121,96 +134,186 @@ void camera_calibrate() {
   Serial.printf("** OK - Camera Calibrate Success! **");
 }
 
-// 构建类 UKHAS 格式的数据帧
-// $$CALLSIGN,frame_counter,HH:MM:SS,latitude,longitude,altitude,other,fields
-void buildPITSMessage(const gps_fix &fix) {
+// GPS 初始化
+void Initialize_GPS_Module(unsigned long timeout_ms = 200000) {
+  delay(2000);
+  Serial.println("** Wait - GPS Initializing! **");
+  unsigned long start = millis();
 
+  if (DEV_Pass("GPS_Initialize")) return;
+
+  while (millis() - start < timeout_ms) {
+    while (GPS_Serial.available()) {
+      gps.encode(GPS_Serial.read());
+    }
+
+    if (gps.location.isValid()) {
+      Serial.println("** OK - GPS init Completed! **");
+      // 构建遥测帧
+      Build_Telemetry_Frame();
+
+      delay(25);
+      Serial.printf("** %s **\n", gpsMessage);
+      delay(25);
+      return;
+    }
+    delay(2000);
+  }
+
+  Serial.println("** Fail - GPS init Failed! **");
+  Initialization_Status = false;
+}
+
+// 构建类 UKHAS 格式的遥测数据帧
+// $$CALLSIGN,Frame_Counter,HH:MM:SS,latitude,longitude,altitude,other,fields
+uint16_t Frame_Counter = 0;
+void Build_Telemetry_Frame() {
   // 先拼装标准格式的时间
   snprintf(gps_time, sizeof(gps_time),
     "%04d-%02d-%02dT%02d:%02d:%02dZ",
-    fix.dateTime.year + 2000,
-    fix.dateTime.month,
-    fix.dateTime.day + 18, // 此处有 GPS 玄学问题，有待研究
-    fix.dateTime.hours,
-    fix.dateTime.minutes,
-    fix.dateTime.seconds
+    gps.date.year(),
+    gps.date.month(),
+    gps.date.day(),
+    gps.time.hour(),
+    gps.time.minute(),
+    gps.time.second()
   );
 
   // 再拼装遥测字符串
   snprintf(gpsMessage, sizeof(gpsMessage),
     "$$%s,%d,%s,%.6f,%.6f,%.2f,%.2f,%d,%.2f",
-    SSDV_CALLSIGN,     // 呼号
-    frame_counter,     // 帧数
-    gps_time,          // 时间
-    fix.latitude(),    // 纬度
-    fix.longitude(),   // 经度
-    fix.altitude(),    // 高度
-    fix.speed_kph(),   // 速度
-    fix.satellites,    // 卫星数
-    fix.heading()      // 航向角
+    SSDV_CALLSIGN,              // 呼号
+    Frame_Counter,              // 帧数
+    gps_time,                   // 时间
+    gps.location.lat(),         // 纬度
+    gps.location.lng(),         // 经度
+    gps.altitude.meters(),      // 高度
+    gps.speed.kmph(),           // 速度
+    gps.satellites.value(),     // 卫星数
+    gps.course.deg()            // 航向角
   );
 
-  frame_counter += 1;
+  Frame_Counter += 1;
 
-  // 发送
   delay(25);
-  Serial.println(gpsMessage);
+  Serial.printf(gpsMessage);
   delay(25);
 }
 
-// GPS 初始化
-void gps_init(unsigned long timeout_ms = 200000) {
-  delay(2000);
-  Serial.println("** Wait - GPS Initializing! **");
-  unsigned long start = millis();
+// 启动 GPS 发送任务
+void Create_GPS_Task() {
+  xTaskCreate(
+    V_Transmit_GPS_Task,   // 任务函数
+    "GPS_TX",              // 任务名
+    4096,                  // 堆栈大小（字大但稳妥）
+    NULL,                  // 参数
+    1,                     // 优先级
+    NULL                   // 任务句柄
+  );
+}
 
-  // 调试用
-  //Serial.println("** OK - GPS init Completed! **");
-  //return;
-  
-  while (millis() - start < timeout_ms) {
-    if (gps.available(GPS_Serial)) {
-      fix = gps.read();
+// GPS 发送任务
+void V_Transmit_GPS_Task(void* pvParameters) {
 
-      if (fix.valid.location) {
-        Serial.println("** OK - GPS init Completed! **");
-        return;
-      }
-    }
-    delay(100);
+  // 如果处于开发状态就删除任务
+  if (DEV_Pass("GPS_Transmit")) {
+    vTaskDelete(NULL);
+    return;
   }
 
-  Serial.println("** Fail - GPS init Failed! **");
-  initialization_status = false;
+  for (;;) {
+    // 喂数据
+    while (GPS_Serial.available()) {
+      gps.encode(GPS_Serial.read());
+    }
+
+    // 如果有更新就发送
+    if (gps.location.isUpdated()) {
+
+      // 构建遥测帧
+      Build_Telemetry_Frame();
+
+      delay(25);
+      Serial.printf("** %s **\n", gpsMessage);
+      delay(25);
+
+      // 每 20 秒发送一次
+      vTaskDelay(pdMS_TO_TICKS(20000));
+    } else {
+      // 过 100 毫秒重新检查再发送
+      vTaskDelay(pdMS_TO_TICKS(100));
+    }
+  }
 }
 
-// 发送有效 GPS 数据
-void tx_gps_info(unsigned long timeout_ms = 5000) {
-  unsigned long start = millis();
+// 启动中继任务
+void Create_Relay_Task() {
+    xTaskCreatePinnedToCore(
+    V_Relay_Task,             // 任务函数
+    "RelayTask",              // 任务名称
+    4096,                     // 堆栈大小
+    NULL,                     // 传递参数
+    configMAX_PRIORITIES - 1, // 高优先级
+    &xRelayTaskHandle,        // 任务句柄
+    0                         // 运行核心
+  );
+}
 
-  // 调试用
-  //return;
+// 中继任务
+// 地面站 TX : ##ToCall,FmCall,INFO\n
+// 气球站 TX ：** ##RELAY,ToCall,FmCall,INFO **
+int Relay_Count = 0;  // 发送频率限制，避免破坏性攻击
+void V_Relay_Task(void *pvParameters) {
+  // 避免编译器警告
+  (void) pvParameters;
 
-  while (millis() - start < timeout_ms) {
-    if (gps.available(GPS_Serial)) {
-      fix = gps.read();
+  // 初始化中继接收缓存
+  String currentRelayBuffer = "";
 
-      if (fix.valid.location && fix.valid.altitude && fix.valid.satellites) {
-        buildPITSMessage(fix);
-        Serial.printf("** %s **\n", gpsMessage);
+  for (;;) {
+    // 读取所有接收到的数据
+    while (Serial.available()) {
+      char c = (char)Serial.read();
+      // 当帧超长或程序处于SSDV发送状态时忽略并丢弃所有接收到的帧
+      if (currentRelayBuffer.length() >= 256 || SSDV_State) {
+        if (c == '\n') { 
+          currentRelayBuffer = "";
+        }
+        continue;
+      }
+      currentRelayBuffer += c;
+    }
+
+    int newlineIndex;
+    // 处理所有完整帧（以 \n 结尾）
+    while ((newlineIndex = currentRelayBuffer.indexOf('\n')) != -1) {
+      String line = currentRelayBuffer.substring(0, newlineIndex);
+      currentRelayBuffer = currentRelayBuffer.substring(newlineIndex + 1);
+
+      line.trim();
+
+      // 构造新的数据帧并发送，要求原帧以 ## 开头，并且计数器不得超过40，以避免破坏性攻击
+      if (line.length() <= 256 && line.startsWith("##") && Relay_Count <= 40) {
+        String content = line.substring(2);
         delay(25);
-        return;
+        Serial.printf("** ##RELAY,%s **", content.c_str());
+        delay(25);
+        Relay_Count += 1;
       }
     }
+
+    // 如果 currentRelayBuffer 太长了，说明后面没有换行也超限了，强制清空
+    if (currentRelayBuffer.length() > 256) {
+      currentRelayBuffer = "";
+    }
+        
+    // 降低任务优先级，让其他任务也有机会运行
+    vTaskDelay(pdMS_TO_TICKS(100)); // 暂停100毫秒，避免饿死其他任务
   }
-
-  happen_error();
-  Serial.println("** Fail - GPS failure! **");
 }
-
 
 // 读取图像数据
-int read_camera_buffer_for_ssdv(uint8_t *buffer, int numBytes, camera_fb_t *fb, int fbIndex) {
+int Read_IMG_Buffer(uint8_t *buffer, int numBytes, camera_fb_t *fb, int fbIndex) {
 
   int bufSize = 0;
   // 检查是否到达图像缓冲区的末尾
@@ -227,10 +330,12 @@ int read_camera_buffer_for_ssdv(uint8_t *buffer, int numBytes, camera_fb_t *fb, 
 }
 
 // 调制 SSDV 数据包
-void process_ssdv(camera_fb_t *fb) {
+void Process_SSDV_Packet(camera_fb_t *fb) {
 
   // 定义函数逻辑所用变量
   int index = 0, c = 0, PacketCount = 0;
+  // 更新编码状态
+  SSDV_State = true;
 
   // 图像编号
   Serial.printf("** SSDV Encoding: image %u **\n", imageID);
@@ -246,7 +351,7 @@ void process_ssdv(camera_fb_t *fb) {
 
     // 当状态为 SSDV_FEED_ME 时投喂数据
     while ((c = ssdv_enc_get_packet(&ssdv)) == SSDV_FEED_ME) {
-      index += read_camera_buffer_for_ssdv(ssdv_feed_buff, SSDV_IMG_BUFF_SIZE, fb, index);
+      index += Read_IMG_Buffer(ssdv_feed_buff, SSDV_IMG_BUFF_SIZE, fb, index);
       ssdv_enc_feed(&ssdv, ssdv_feed_buff, SSDV_IMG_BUFF_SIZE);
     }
 
@@ -266,51 +371,59 @@ void process_ssdv(camera_fb_t *fb) {
     Serial.write(ssdv_out_buff, 256);
     delay(25);
 
-    // 每发送 20 个包调用一次遥测帧构建
-    if (PacketCount % 20 == 0) {
-      tx_gps_info();
-    }
     PacketCount++;
   }
+  // 清零中继计数
+  Relay_Count = 0;
+  SSDV_State = false;
 }
 
 // 上电初始化
 void setup() {
-  delay(5000);
+  delay(5000);                                 // 等待五秒，保证上电稳定
   pinMode(BUZZ, OUTPUT);                       // 配置告警IO
   digitalWrite(BUZZ, LOW);                     // 初始化为低电平
   Serial.begin(9600);                          // 设置主串口波特率
   GPS_Serial.begin(9600, SERIAL_8N1, 15, -1);  // 设置 GPS 串口
   Serial.printf("** Wait - Booting... **");    // 自检指示1
-  setup_camera();                              // 摄像头初始化
-  camera_calibrate();                          // 摄像头校准
-  gps_init();                                  // GPS 校准
-  tx_gps_info();                               // GPS 传输
-  initialize_check();                          // 初始化就绪检查
+  Setup_Camera();                              // 摄像头初始化
+  Camera_Calibrate();                          // 摄像头校准
+  Initialize_GPS_Module();                     // GPS 校准
+  Create_GPS_Task();                           // 创建 GPS 传输任务
+  Create_Relay_Task();                         // 创建中继任务
+  Initialize_Check();                          // 初始化就绪检查
   Serial.printf("** OK - Init Done! **");      // 自检指示2
+  delay(1000);                                 // 等待两秒，保证工作稳定
 }
 
 // 主入口函数
 void loop() {
 
-  tx_gps_info();
-
   // 拍摄图片并执行检查
   camera_fb_t *fb = NULL;
+
+  // 丢弃旧帧
+  for (int i = 0; i < 3; i++) {
+    camera_fb_t *fb = esp_camera_fb_get();
+    if (!fb) break;
+    esp_camera_fb_return(fb);
+  }
+
+  // 拍摄
   fb = esp_camera_fb_get();
   if (!fb || !fb->buf || fb->len == 0) {
     Serial.printf("** Fail - Camera capture Failed! **");
     if (fb) esp_camera_fb_return(fb);
-    happen_error();
+    Happen_Error();
     return;
   }
 
   // 对拍摄的图像进行SSDV编码
-  process_ssdv(fb);
+  Process_SSDV_Packet(fb);
 
   // 释放摄像头帧缓冲区
   esp_camera_fb_return(fb);
 
-  tx_gps_info();
-  delay(30000);
+  // 发送 GPS 信息
+  vTaskDelay(pdMS_TO_TICKS(60000));
 }
