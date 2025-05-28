@@ -21,6 +21,8 @@ LICENSE: GNU General Public License v3.0
 #include <string.h>
 #pragma comment(lib, "winhttp.lib")
 
+int send_https_json(const wchar_t *host, const wchar_t *path, const char *json_data);
+
 int main(int argc, char *argv[]) {
     if (argc < 12) {
         printf("用法: %s <上传者呼号> <接收时间> <球上时间> <经度> <纬度> <高度> <航向角> <GPS卫星数> <地面站经度> <地面站纬度> <地面站高度>\n", argv[0]);
@@ -39,10 +41,11 @@ int main(int argc, char *argv[]) {
     const char *uplat             = argv[10];
     const char *upalt             = argv[11];
 
-    // 构造 JSON 数据
-    char json_data[2048];
-    int json_len = snprintf(json_data, sizeof(json_data),
+    // 构造 telemetry JSON 数据
+    char telemetry_json[2048];
+    int telemetry_json_len = snprintf(telemetry_json, sizeof(telemetry_json),
         "[{"
+        "\"dev\":\"BG7ZDQ\","
         "\"software_name\":\"BG7ZDQ_HAB_GS\","
         "\"software_version\":\"0.0.1\","
         "\"uploader_callsign\":\"%s\","
@@ -66,142 +69,106 @@ int main(int argc, char *argv[]) {
         uplat, uplon, upalt
     );
 
-    if (json_len < 0 || json_len >= sizeof(json_data)) {
+    if (telemetry_json_len < 0 || telemetry_json_len >= sizeof(telemetry_json)) {
         fprintf(stderr, "JSON 数据构造失败或超出缓冲区大小。\n");
         return 1;
     }
 
-    printf("[DEBUG] JSON 内容如下：%s\n", json_data);
+    // 发送 JSON 数据到 SondeHub
+    printf("[DEBUG] Telemetry JSON 内容如下：%s\n", telemetry_json);
+    send_https_json(L"api.v2.sondehub.org", L"/amateur/telemetry", telemetry_json);
 
-    // WinHTTP 相关变量
-    HINTERNET hSession = NULL;
-    HINTERNET hConnect = NULL;
-    HINTERNET hRequest = NULL;
-    DWORD dwSize = 0;
-    DWORD dwDownloaded = 0;
-    LPSTR pszOutBuffer;
+    // 构造 Listener JSON 数据
+    char listener_json[2048];
+    int listener_json_len = snprintf(listener_json, sizeof(listener_json),
+    "{"
+    "\"software_name\":\"BG7ZDQ_HAB_GS\","
+    "\"software_version\":\"0.0.1\","
+    "\"uploader_callsign\":\"%s\","
+    "\"uploader_position\":[%s,%s,%s],"
+    "\"uploader_radio\":\"BG7ZDQ_HC-12\","
+    "\"mobile\":false"
+    "}",
+    uploader_callsign,
+    uplat, uplon, upalt
+);
+
+    if (listener_json_len < 0 || listener_json_len >= sizeof(listener_json)) {
+        fprintf(stderr, "JSON 数据构造失败或超出缓冲区大小。\n");
+        return 1;
+    }
+
+    // 发送 JSON 数据到 SondeHub
+    printf("[DEBUG] Listener JSON 内容如下：%s\n", listener_json);
+    send_https_json(L"api.v2.sondehub.org", L"/amateur/listeners", listener_json);
+}
+
+
+int send_https_json(const wchar_t *host, const wchar_t *path, const char *json_data) {
+    int status_code = -1;
+    DWORD dwSize = 0, dwDownloaded = 0;
+    HINTERNET hSession = NULL, hConnect = NULL, hRequest = NULL;
     BOOL bResults = FALSE;
 
-    // 初始化 WinHTTP 会话
-    hSession = WinHttpOpen(L"BG7ZDQ_HAB_GS", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    // 创建 session
+    hSession = WinHttpOpen(L"BG7ZDQ_HAB_GS", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                           WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) goto cleanup;
 
-    if (!hSession) {
-        fprintf(stderr, "WinHttpOpen 失败 (%d)\n", GetLastError());
-        return 1;
-    }
+    // 连接主机
+    hConnect = WinHttpConnect(hSession, host, INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!hConnect) goto cleanup;
 
-    // 连接到服务器
-    hConnect = WinHttpConnect(hSession, L"api.v2.sondehub.org", INTERNET_DEFAULT_HTTPS_PORT, 0);
-
-    if (!hConnect) {
-        fprintf(stderr, "WinHttpConnect 失败 (%d)\n", GetLastError());
-        WinHttpCloseHandle(hSession);
-        return 1;
-    }
-
-    // 打开 HTTP 请求
-     // WINHTTP_FLAG_SECURE 用于 HTTPS
-    hRequest = WinHttpOpenRequest(hConnect, L"PUT", L"/amateur/telemetry", NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
-
-    if (!hRequest) {
-        fprintf(stderr, "WinHttpOpenRequest 失败 (%d)\n", GetLastError());
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return 1;
-    }
+    // 创建请求
+    hRequest = WinHttpOpenRequest(hConnect, L"PUT", path, NULL,
+                                   WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                   WINHTTP_FLAG_SECURE);
+    if (!hRequest) goto cleanup;
 
     // 设置请求头
-    bResults = WinHttpAddRequestHeaders(hRequest, L"Content-Type: application/json", (ULONG)-1L, WINHTTP_ADDREQ_FLAG_REPLACE | WINHTTP_ADDREQ_FLAG_ADD);
-    if (!bResults) {
-        fprintf(stderr, "WinHttpAddRequestHeaders (Content-Type) 失败 (%d)\n", GetLastError());
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return 1;
-    }
+    WinHttpAddRequestHeaders(hRequest, L"Content-Type: application/json", (ULONG)-1L,
+                             WINHTTP_ADDREQ_FLAG_REPLACE | WINHTTP_ADDREQ_FLAG_ADD);
+    WinHttpAddRequestHeaders(hRequest, L"Accept: text/plain", (ULONG)-1L,
+                             WINHTTP_ADDREQ_FLAG_REPLACE | WINHTTP_ADDREQ_FLAG_ADD);
 
-    // Accept
-    bResults = WinHttpAddRequestHeaders(hRequest, L"Accept: text/plain", (ULONG)-1L, WINHTTP_ADDREQ_FLAG_REPLACE | WINHTTP_ADDREQ_FLAG_ADD);
-     if (!bResults) {
-        fprintf(stderr, "WinHttpAddRequestHeaders (Accept) 失败 (%d)\n", GetLastError());
-        // 不影响主流程，但可以打印警告
-    }
+    // 发送请求
+    int json_len = strlen(json_data);
+    bResults = WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                  WINHTTP_NO_REQUEST_DATA, 0, json_len, 0);
+    if (!bResults) goto cleanup;
 
-
-    // 发送请求头和数据
-    bResults = WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, json_len, 0);
-
-    if (!bResults) {
-        fprintf(stderr, "WinHttpSendRequest 失败 (%d)\n", GetLastError());
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return 1;
-    }
-
-    // 发送 JSON 数据体
-    bResults = WinHttpWriteData(hRequest, json_data, json_len, &dwSize); // dwSize 是实际写入的字节数
-    if (!bResults) {
-        fprintf(stderr, "WinHttpWriteData 失败 (%d)\n", GetLastError());
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return 1;
-    }
+    // 写入 JSON 数据
+    bResults = WinHttpWriteData(hRequest, json_data, json_len, &dwSize);
+    if (!bResults) goto cleanup;
 
     // 接收响应
     bResults = WinHttpReceiveResponse(hRequest, NULL);
+    if (!bResults) goto cleanup;
 
-    if (!bResults) {
-        fprintf(stderr, "WinHttpReceiveResponse 失败 (%d)\n", GetLastError());
-        WinHttpCloseHandle(hRequest);
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        return 1;
-    } else {
-        // 读取响应头和状态码
-        DWORD dwStatusCode = 0;
-        DWORD dwHeaderSize = sizeof(dwStatusCode);
-        WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, NULL, &dwStatusCode, &dwSize, NULL);
+    // 获取 HTTP 状态码
+    DWORD dwStatusCode = 0;
+    DWORD dwSizeOut = sizeof(dwStatusCode);
+    WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                        NULL, &dwStatusCode, &dwSizeOut, NULL);
+    status_code = (int)dwStatusCode;
 
-        printf("HTTP 状态码: %d\n", dwStatusCode);
-
-        if (dwStatusCode >= 200 && dwStatusCode < 300) {
-            printf("上传成功！\n");
-        } else {
-            fprintf(stderr, "上传失败，HTTP 状态码: %d\n", dwStatusCode);
-        }
-
-        // 读取响应体
-        // 先查询响应体大小
-        dwSize = 0;
-        WinHttpQueryDataAvailable(hRequest, &dwSize);
-
-        if (dwSize > 0) {
-            pszOutBuffer = (LPSTR)malloc(dwSize + 1);
-            if (pszOutBuffer == NULL) {
-                fprintf(stderr, "内存分配失败\n");
-            } else {
-                ZeroMemory(pszOutBuffer, dwSize + 1);
-                bResults = WinHttpReadData(hRequest, (LPVOID)pszOutBuffer,
-                                           dwSize, &dwDownloaded);
-
-                if (bResults) {
-                    printf("[DEBUG] 服务器响应: %s\n", pszOutBuffer);
-                } else {
-                    fprintf(stderr, "WinHttpReadData 失败 (%d)\n", GetLastError());
-                }
-                free(pszOutBuffer);
+    // 可选：读取响应体
+    WinHttpQueryDataAvailable(hRequest, &dwSize);
+    if (dwSize > 0) {
+        char *buffer = malloc(dwSize + 1);
+        if (buffer) {
+            ZeroMemory(buffer, dwSize + 1);
+            if (WinHttpReadData(hRequest, buffer, dwSize, &dwDownloaded)) {
+                printf("[DEBUG] 服务器响应: %s\n", buffer);
             }
-        } else {
-            printf("[DEBUG] 服务器没有返回响应体。\n");
+            free(buffer);
         }
     }
 
-    // 关闭句柄
+cleanup:
     if (hRequest) WinHttpCloseHandle(hRequest);
     if (hConnect) WinHttpCloseHandle(hConnect);
     if (hSession) WinHttpCloseHandle(hSession);
 
-    return 0;
+    return status_code;
 }
