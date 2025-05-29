@@ -4,7 +4,7 @@
 #define SSDV_OUT_BUFF_SIZE 256          // 用于存放编码后SSDV数据包的缓冲区
 #define SSDV_SIZE_NOFEC 256             // 标准SSDV包大小 (无FEC)
 #define CAM_CALIBRATE 10                // 摄像头校准次数
-#define DEV_STATE false                  // 开发状态
+#define DEV_STATE false                 // 开发状态
 
 // 头文件
 #include "Arduino.h"
@@ -165,7 +165,7 @@ void Initialize_GPS_Module(unsigned long timeout_ms = 200000) {
 }
 
 // 构建类 UKHAS 格式的遥测数据帧
-// $$CALLSIGN,Frame_Counter,HH:MM:SS,latitude,longitude,altitude,other,fields
+// $$CALLSIGN,Frame_Counter,HH:MM:SS,latitude,longitude,altitude,speed,sats,heading
 uint16_t Frame_Counter = 0;
 void Build_Telemetry_Frame() {
   // 先拼装标准格式的时间
@@ -292,10 +292,10 @@ void V_Relay_Task(void *pvParameters) {
 
       line.trim();
 
-      // 构造新的数据帧并发送，要求原帧以 ## 开头，并且计数器不得超过40，以避免破坏性攻击
-      if (line.length() <= 256 && line.startsWith("##") && Relay_Count <= 40) {
+      // 构造新的数据帧并发送，要求原帧以 ## 开头，并且计数器不得超过80，以避免破坏性攻击
+      if (line.length() <= 256 && line.startsWith("##") && Relay_Count <= 80) {
         String content = line.substring(2);
-        delay(25);
+        vTaskDelay(pdMS_TO_TICKS(25));
         Serial.printf("** ##RELAY,%s **", content.c_str());
         delay(25);
         Relay_Count += 1;
