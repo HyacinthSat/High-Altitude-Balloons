@@ -2,6 +2,9 @@
 
 本仓库托管了风信子卫星项目下的一个气球计划的代码与电路设计。  
 ~~高空气球，穷人的太空计划~~  
+
+数据面板：[hab.satellite.ac.cn](https://hab.satellites.ac.cn/)  
+
 ![image](https://github.com/user-attachments/assets/690048eb-9224-47ac-8bea-609d323d8b61)
 
 
