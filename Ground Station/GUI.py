@@ -997,6 +997,7 @@ class QSO_Windows(QWidget):
         self.rx_count = 0
         self.tx_count = 0
         self.QSO_count = 0
+        self.qso_callsigns = set()
 
         # 初始化UI
         self.init_ui()
@@ -1199,6 +1200,8 @@ class QSO_Windows(QWidget):
         current_time = datetime.now().strftime("%H:%M:%S")
 
         # 构建消息字符串：##ToCall,FmCall,Grid,INFO\n
+        # 调试版本
+        # full_msg = f"** ##RELAY,{to_call},{self.callsign},{self.grid},{msg} **"
         full_msg = f"##{to_call},{self.callsign},{self.grid},{msg}\n"
 
         # 保存完整消息
@@ -1216,7 +1219,7 @@ class QSO_Windows(QWidget):
     def unlock_send_button(self):
         self.TX_button.setEnabled(True)
 
-    # 添加数据到通联信息表格并更新地图
+    # 添加数据到通联信息表格(此函数同时从串口线程读取数据)
     def add_info_table_row(self, time_str, source_call, target_call, grid, message, program):
 
         # 计数
@@ -1265,6 +1268,8 @@ class QSO_Windows(QWidget):
                 item = self.info_table.item(row_position, col)
                 if item:
                     item.setBackground(QColor("#00BFFF"))
+                if "73" in message:
+                    self.add_qso_table_row(source_call, grid)
         #将他人的CQ设置为#EE82EE
         elif target_call == "CQ":
             for col in range(self.info_table.columnCount()):
@@ -1291,12 +1296,19 @@ class QSO_Windows(QWidget):
     # 添加 QSO 表格行
     def add_qso_table_row(self, source_call, grid):
 
+        # 如果已经记录过该呼号则跳过
+        if source_call in self.qso_callsigns:
+            return
+
+        # 添加到已记录集合
+        self.qso_callsigns.add(source_call)
+
         # 计数
         self.QSO_count += 1
         self.QSO_count_num.setText(str(self.QSO_count))
         self.QSO_count_num.adjustSize()
 
-        # 直接使用 self.QSO_info_table 访问表格实例
+        # 插入表格行
         row_position = self.QSO_info_table.rowCount()
         self.QSO_info_table.insertRow(row_position)
 
@@ -1315,7 +1327,7 @@ class QSO_Windows(QWidget):
         item_grid.setTextAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
         self.QSO_info_table.setItem(row_position, 2, item_grid)
 
-        # 信息滚动
+        # 滚动到底部
         scrollbar = self.QSO_info_table.verticalScrollBar()
         at_bottom = scrollbar.value() == scrollbar.maximum()
         if at_bottom:
@@ -1329,19 +1341,14 @@ class QSO_Windows(QWidget):
         ToCallsign = self.info_table.item(row, 2).text()
         MSG = self.info_table.item(row, 3).text()
 
-        # 当对方在CQ时，回复73
+        # 当对方在CQ时，回复73,QSL?
         if (FmCallsign != self.callsign and ToCallsign == "CQ"):
             self.Callsign_input.setText(FmCallsign)
             self.MSG_input.setText("73")
-        # 当对方回复我的CQ时(即73)，回复RR73
+        # 当对方回复我的CQ时(即73,QSL?)，回复RR73 QSL.
         elif (FmCallsign != self.callsign and ToCallsign == self.callsign and len(MSG) > 6 and MSG.endswith(",73")):
             self.Callsign_input.setText(FmCallsign)
             self.MSG_input.setText("RR73")
-        # 当对方回复我的回复时(即RR73)，回复 73 并记录入QSO表格
-        elif (FmCallsign != self.callsign and ToCallsign == self.callsign and len(MSG) > 6 and MSG.endswith(",RR73")):
-            self.Callsign_input.setText(FmCallsign)
-            self.MSG_input.setText("73")
-            self.add_qso_table_row(FmCallsign, MSG[:6])
         else:
             if FmCallsign != self.callsign:
                 self.Callsign_input.setText(FmCallsign)
