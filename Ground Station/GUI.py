@@ -23,7 +23,7 @@ from PyQt6.QtGui import QIcon, QPixmap, QColor
 from datetime import datetime, timedelta, timezone
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import Qt, QUrl, QTimer, QTime, QThread, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QPlainTextEdit, QMessageBox, QComboBox, QLineEdit, QFormLayout, QHeaderView, QTableWidget, QVBoxLayout, QTableWidgetItem, QAbstractItemView
+from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QPlainTextEdit, QMessageBox, QComboBox, QLineEdit, QFormLayout, QHeaderView, QTableWidget, QVBoxLayout, QTableWidgetItem, QAbstractItemView, QDialog
 from PyQt6.QtCore import QTimer, QTime, Qt
 
 # 禁用 GPU 加速
@@ -45,6 +45,7 @@ frame_style = 'border: 1px solid #AAAAAA; border-radius: 4px;;'
 config = RawConfigParser()
 config.optionxform = str
 config.read("config.ini")
+quitting_for_restart = False
 
 # 程序主窗口
 class GUI(QWidget):
@@ -63,25 +64,11 @@ class GUI(QWidget):
         self.setFixedSize(800, 510)
         self.setWindowTitle('气球地面站：The Ground Station Software of HAB')
         self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         self.SET_window = None
         self.QSO_window = None 
         self.Radio_Serial_Thread = None
- 
-
-        # 地面站信息
-        try:
-            self.callsign = config.get("GroundStation", "Callsign")
-            self.local_lat = config.getfloat("GroundStation", "Latitude")
-            self.local_lng = config.getfloat("GroundStation", "Longitude")
-            self.local_alt = config.getfloat("GroundStation", "Altitude")
-        except Exception as e:
-            QMessageBox.warning(self, "提示", f"请重设地面站信息：{e}")
-            # 提供默认值以防止崩溃
-            self.callsign = ""
-            self.local_lat = 0
-            self.local_lng = 0
-            self.local_alt = 0
 
         # 气球信息
         self.balloon_lat = 0
@@ -93,9 +80,6 @@ class GUI(QWidget):
         self.filename  = ''
         self.img_num   = -1
         self.frame_num = 1
-
-        # 退出标记位
-        self._quitting_for_restart = False
 
         # 设置主程序图标
         global waiting, correct, warning, error, data, hourglass, camera, img, geo
@@ -112,7 +96,16 @@ class GUI(QWidget):
         # 数据缓存
         self.buffer = bytearray()
 
-        self.UI()
+        # 最后获取地面站信息
+        try:
+            self.callsign = config.get("GroundStation", "Callsign")
+            self.local_lat = config.getfloat("GroundStation", "Latitude")
+            self.local_lng = config.getfloat("GroundStation", "Longitude")
+            self.local_alt = config.getfloat("GroundStation", "Altitude")
+            self.UI()
+        except Exception as e:
+            QMessageBox.warning(self, "提示", f"请重设地面站信息")
+            self.SET()
 
     # 主窗口
     def UI(self):
@@ -252,6 +245,7 @@ class GUI(QWidget):
         self.rotator_el_NUM.setText("")
         self.rotator_el_NUM.move(260, 465)
         self.rotator_el_NUM.setStyleSheet(title_style)
+        
         '''右栏'''
         # 系统状态指示
         self.Data_status_label = QLabel(self)
@@ -345,7 +339,7 @@ class GUI(QWidget):
         self.Update_COM_Info()
         self.serial_timer = QTimer(self)
         self.serial_timer.timeout.connect(self.Update_COM_Info)
-        self.serial_timer.start(200)
+        self.serial_timer.start(500)
 
     # 向调试信息框写入信息
     def debug_info(self, text):
@@ -358,32 +352,32 @@ class GUI(QWidget):
         self.buffer.extend(data)
 
         while True:
-            # 优先尝试提取 ASCII
-            if self.Try_Extract_ASCII():
+            # 优先尝试提取文本
+            if self.Try_Extract_Text():
                 continue
             # 然后提取 SSDV
             if self.try_extract_ssdv():
                 continue
             break
 
-    # 使用正则表达式提取 ASCII 帧信息
-    def Try_Extract_ASCII(self) -> bool:
+    # 使用正则表达式提取文本帧信息
+    def Try_Extract_Text(self) -> bool:
         current_buffer_bytes = bytes(self.buffer)
         changed = False
 
-        # 找出所有完整的 ASCII 帧
+        # 找出所有完整的文本帧
         for match in re.finditer(rb"\*\*(.+?)\*\*", current_buffer_bytes, re.DOTALL):
-            ascii_raw = match.group(0)
+            Text_raw = match.group(0)
 
             try:
-                ascii_text = ascii_raw.decode("ascii", errors="strict").strip("* ").strip()
+                Text_text = Text_raw.decode("utf-8", errors="strict").strip("* ").strip()
             except UnicodeDecodeError:
-                print(f"[警告] ASCII解码失败: {ascii_raw}")
+                print(f"[警告] 文本解码失败: {Text_raw}")
                 continue
             
-            # 数传状态正常，将 ASCII 数据发送到处理函数
+            # 数传状态正常，将文本数据发送到处理函数
             self.Data_status_icon.setPixmap(correct)
-            self.Processing_ASCII_Data(ascii_text)
+            self.Processing_Text_Data(Text_text)
             changed = True
 
         # 如果有匹配，清除 buffer 直到最后一个匹配结束位置
@@ -394,11 +388,11 @@ class GUI(QWidget):
         else:
             return False
         
-    # 处理非图像 ASCII 数据
-    def Processing_ASCII_Data(self, text):
+    # 处理非图像文本数据
+    def Processing_Text_Data(self, text):
 
         # 记录日志
-        print(f"ASCII帧：{text}")
+        print(f"文本帧：{text}")
         time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open("log.txt", "a") as f:
             f.write(f"{time}    {text}\n")
@@ -567,9 +561,7 @@ class GUI(QWidget):
 
         # 调用 SSDV 解码器解调存储的 dat 文件
         try:
-            result = subprocess.run(["./ssdv", "-d", f"dat/{self.filename}.dat", f"{self.filename}.jpg"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            if result.returncode != 0:
-                raise RuntimeError("SSDV 解码器返回码非 0")
+            subprocess.run(["./ssdv", "-d", f"dat/{self.filename}.dat", f"{self.filename}.jpg"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except Exception as e:
             self.debug_info(f"SSDV 解码失败: {e}")
             self.buffer = self.buffer[start + frame_len:]
@@ -627,13 +619,15 @@ class GUI(QWidget):
             self.Radio_Serial_Thread.stop()
             self.Radio_Serial_Thread = None
         self.debug_info("接收机串口已断开")
-        QMessageBox.warning(self, "警告：串口连接失败", "接收机串口连接失败或已断开。")
 
     # 发送数据到收发信机串口
     def Send_Data_to_Radio(self, data_to_send: str):
         # 检查收发信机串口是否打开
         if self.Radio_Serial_Thread and self.Radio_Serial_Thread.isRunning():
-            self.Radio_Serial_Thread.send_data(data_to_send.encode('ascii'))
+            try:
+                self.Radio_Serial_Thread.send_data(data_to_send.encode('utf-8'))
+            except Exception as e:
+                print(f"数据编码发送时发生错误: {e}")
         else:
             self.debug_info("接收机串口未连接或未运行，无法发送数据。")
             QMessageBox.warning(self, "发送失败", "接收机串口未连接或未运行。")
@@ -715,71 +709,11 @@ class GUI(QWidget):
     # 启动设置窗口
     def SET(self):
         if self.SET_window is None:
-            self.SET_window = SET_Windows(self.callsign, self.local_lat, self.local_lng, self.local_alt) 
-            self.SET_window.coords_updated.connect(self.update_local_coords)
-        self.SET_window.show()
-
-    # 更新地面站信息
-    def update_local_coords(self, Callsign, lat, lng, alt):
-        
-        # 检查是否有实际变化
-        if self.callsign != Callsign or self.local_lat != lat or self.local_lng != lng or self.local_alt != alt:
-            self.callsign = Callsign
-            self.local_lat = lat
-            self.local_lng = lng
-            self.local_alt = alt
-            self.debug_info(f"地面站信息已更改")
-
-            # 更新配置文件
             try:
-                if not config.has_section("GroundStation"):
-                    config.add_section("GroundStation")
-                config.set("GroundStation", "Callsign", self.callsign)
-                config.set("GroundStation", "Latitude", str(self.local_lat))
-                config.set("GroundStation", "Longitude", str(self.local_lng))
-                config.set("GroundStation", "Altitude", str(self.local_alt))
-
-                with open("config.ini", "w") as configfile:
-                    config.write(configfile)
-
-            except Exception as e:
-                self.debug_info(f"配置文件写入错误: {e}")
-                QMessageBox.critical(self, "错误", f"存储信息到配置文件失败！\n{e}")
-
-            self.restart_application()
-
-    # 重启应用程序
-    def restart_application(self):
-
-        self.debug_info("正在重启应用程序...")
-
-        # 重设标记位
-        self._quitting_for_restart = True
-
-        # 停止所有子线程
-        if self.Radio_Serial_Thread:
-            self.Radio_Serial_Thread.stop()
-            self.Radio_Serial_Thread.wait()
-        
-        # 关闭所有窗口
-        QApplication.closeAllWindows()
-
-        try:
-            current_script_path = os.path.abspath(sys.argv[0]) 
-            # 构建新的命令行参数列表
-            command = [sys.executable, current_script_path] + sys.argv[1:]
-
-            QApplication.closeAllWindows()
-            
-            # 使用 Popen 在后台启动新进程
-            subprocess.Popen(command)
-            
-        except Exception as e:
-            self.debug_info(f"重启失败: {e}")
-            QMessageBox.critical(self, "重启失败", f"程序重启时发生错误：{e}")
-        
-        # 无论重启是否成功，最后都退出当前进程
-        sys.exit(0)
+                self.SET_window = SET_Windows(self.callsign, self.local_lat, self.local_lng, self.local_alt) 
+            except:
+                self.SET_window = SET_Windows("", "", "", "")
+        self.SET_window.show()
 
     # 启动 QSO 窗口
     def QSO(self):
@@ -796,7 +730,7 @@ class GUI(QWidget):
     def closeEvent(self, event):
 
          # 如果是为重启而退出，直接接受事件
-        if self._quitting_for_restart:
+        if quitting_for_restart:
             event.accept()
             return
 
@@ -807,72 +741,8 @@ class GUI(QWidget):
         else:
             event.ignore()
 
-# 串口连接线程
-class SerialConnection(QThread):
-
-    # 发送信号
-    data_received = pyqtSignal(bytes)
-    disconnected = pyqtSignal()
-
-    def __init__(self, port_name, baudrate=9600):
-        super().__init__()
-        self.port_name = port_name
-        self.baudrate = baudrate
-        self._running = True
-        self.serial = None
-        self._send_queue = []
-
-    # 打开串口并读取数据
-    def run(self):
-        # 尝试打开串口
-        try:
-            self.serial = serial.Serial(self.port_name, self.baudrate, timeout=1)
-        except serial.SerialException as e:
-            print(f"[错误] 串口打开失败：{e}")
-            self.disconnected.emit()
-            return
-
-        while self._running:
-            try:
-                # 读取数据
-                if self.serial.in_waiting:
-                    data = self.serial.read(self.serial.in_waiting)
-                    self.data_received.emit(data)
-
-                # 发送数据
-                if self._send_queue:
-                    data_to_send = self._send_queue.pop(0)
-                    self.serial.write(data_to_send)
-                    QThread.msleep(25)
-
-            except serial.SerialException as e:
-                print(f"[错误] 串口异常断开：{e}")
-                self._running = False
-                if self.serial and self.serial.is_open:
-                    self.serial.close()
-                self.serial = None
-                self.disconnected.emit()
-                break
-            except Exception as e:
-                print(f"[错误] 串口操作异常：{e}")
-                continue
-
-    # 发送数据
-    def send_data(self, data: bytes):
-        self._send_queue.append(data)
-
-    # 停止线程
-    def stop(self):
-        self._running = False
-        if self.serial and self.serial.is_open:
-            self.serial.close()
-        self.quit()
-        self.wait()
-
 # 设置窗口
-class SET_Windows(QWidget):
-    # 定义一个信号，用于在坐标和呼号更新后发射给主窗口
-    coords_updated = pyqtSignal(str, float, float, float)
+class SET_Windows(QDialog):
 
     def __init__(self, callsign, current_lat, current_lng, current_alt):
         super().__init__()
@@ -881,9 +751,10 @@ class SET_Windows(QWidget):
         icon = QIcon('UI/logo.ico')
         self.setWindowIcon(icon)
         self.resize(200, 250)
-        self.setFixedSize(220, 280) # 适当调整窗口大小以容纳新的输入框
+        self.setFixedSize(220, 280)
         self.setWindowTitle('设置')
         self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         # 存储先前的呼号和经纬度信息
         self.current_callsign = callsign
@@ -947,17 +818,47 @@ class SET_Windows(QWidget):
             if not (-12263 <= new_alt <= 8848.86):
                 QMessageBox.warning(self, "输入错误", "高度必须在 -12263 到 8848.86 之间。")
                 return
+            
+            # 检查是否产生变更
+            try:
+                is_unchanged = (new_callsign == self.current_callsign and
+                                new_lat == float(self.current_lat) and
+                                new_lng == float(self.current_lng) and
+                                new_alt == float(self.current_alt))
+            except (ValueError, TypeError):
+                is_unchanged = False
+
+            # 未变更则关闭窗口
+            if is_unchanged:
+                self.close()
+                return
 
             # 更新当前呼号和坐标
-            self.current_callsign = new_callsign
-            self.current_lat = new_lat
-            self.current_lng = new_lng
-            self.current_alt = new_alt
+            if not config.has_section("GroundStation"):
+                config.add_section("GroundStation")
+            config.set("GroundStation", "Callsign", new_callsign)
+            config.set("GroundStation", "Latitude", str(new_lat))
+            config.set("GroundStation", "Longitude", str(new_lng))
+            config.set("GroundStation", "Altitude", str(new_alt))
+
+            with open("config.ini", "w") as configfile:
+                config.write(configfile)
+
+            # 重启程序以加载最新配置文件
+            global quitting_for_restart
+            quitting_for_restart = True
+            try:
+                current_script_path = os.path.abspath(sys.argv[0]) 
+                # 构建新的命令行参数列表
+                command = [sys.executable, current_script_path] + sys.argv[1:]
+
+                QApplication.closeAllWindows()
             
-            # 发射信号，通知主窗口更新呼号和坐标
-            self.coords_updated.emit(self.current_callsign, self.current_lat, self.current_lng, self.current_alt)
-            # 保存后关闭设置窗口
-            self.close()
+                # 使用 Popen 在后台启动新进程
+                subprocess.Popen(command)
+            
+            except Exception as e:
+                print(f"[错误] 启动新进程失败：{e}")
 
         except ValueError:
             QMessageBox.warning(self, "输入错误", "请确保经度、纬度、高度输入为有效的数字。")
@@ -979,6 +880,7 @@ class QSO_Windows(QWidget):
         self.setFixedSize(800, 510)
         self.setWindowTitle('数字通信试验')
         self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         # 存储传入的参数
         self.callsign = callsign
@@ -988,7 +890,7 @@ class QSO_Windows(QWidget):
 
         # 构建信息用的参数
         self.ToCallSign = "CQ"
-        self.ToMSG = "Test"
+        self.ToMSG = "Hello!"
 
         # 拼装后的信息
         self.TofullMSG = ""
@@ -1362,10 +1264,95 @@ class QSO_Windows(QWidget):
             f"{int((lon % 20) // 2)}{int(lat % 10)}"
             f"{chr(int((lon % 2) * 12) + 97)}{chr(int((lat % 1) * 24) + 97)}"
         )
+    
+# 串口连接线程
+class SerialConnection(QThread):
+
+    # 发送信号
+    data_received = pyqtSignal(bytes)
+    disconnected = pyqtSignal()
+
+    def __init__(self, port_name, baudrate=9600):
+        super().__init__()
+        self.port_name = port_name
+        self.baudrate = baudrate
+        self._running = True
+        self.serial = None
+        self._send_queue = []
+
+    # 打开串口并读取数据
+    def run(self):
+        # 尝试打开串口
+        try:
+            self.serial = serial.Serial(self.port_name, self.baudrate, timeout=1)
+            self.serial.dtr = False
+            self.serial.rts = False
+        except serial.SerialException as e:
+            print(f"[错误] 串口打开失败：{e}")
+            self.disconnected.emit()
+            return
+
+        while self._running:
+            try:
+                # 读取数据
+                if self.serial.in_waiting:
+                    data = self.serial.read(self.serial.in_waiting)
+                    self.data_received.emit(data)
+
+                # 发送数据
+                if self._send_queue:
+                    data_to_send = self._send_queue.pop(0)
+                    self.serial.write(data_to_send)
+                    QThread.msleep(25)
+
+            except serial.SerialException as e:
+                print(f"[错误] 串口异常断开：{e}")
+                self._running = False
+                if self.serial and self.serial.is_open:
+                    self.serial.close()
+                self.serial = None
+                self.disconnected.emit()
+                break
+            except Exception as e:
+                print(f"[错误] 串口操作异常：{e}")
+                continue
+
+    # 发送数据
+    def send_data(self, data: bytes):
+        self._send_queue.append(data)
+
+    # 停止线程
+    def stop(self):
+        self._running = False
+        if self.serial and self.serial.is_open:
+            self.serial.close()
+        self.quit()
+        self.wait()
+
+# 检查配置文件是否存在且包含必要信息
+def is_config_valid():
+    try:
+        config.read('config.ini')
+        config.get("GroundStation", "Callsign")
+        config.getfloat("GroundStation", "Latitude")
+        config.getfloat("GroundStation", "Longitude")
+        config.getfloat("GroundStation", "Altitude")
+        return True
+    except Exception:
+        return False
 
 # 主事件
 if __name__ == '__main__':
     app = QApplication(sys.argv)
-    GUI = GUI()
-    GUI.show()
-    sys.exit(app.exec())
+
+    # 检查配置文件
+    if is_config_valid(): 
+        main_window = GUI()
+        main_window.show()
+    else:
+        # 配置无效，启动设置对话框
+        QMessageBox.information(None, "欢迎", "首次运行，请先设置地面站信息。")
+        settings_dialog = SET_Windows("", "", "", "")
+        settings_dialog.show()
+            
+sys.exit(app.exec())
