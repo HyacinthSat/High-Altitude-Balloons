@@ -1,4 +1,4 @@
-// OV2640模块引脚定义
+// OV2640 模块引脚定义
 #define Y9_GPIO_NUM    35
 #define Y8_GPIO_NUM    34
 #define Y7_GPIO_NUM    39
@@ -16,5 +16,5 @@
 #define PWDN_GPIO_NUM  32
 #define RESET_GPIO_NUM -1
 
-// 告警指示IO
+// 告警指示 IO
 #define BUZZ 12
