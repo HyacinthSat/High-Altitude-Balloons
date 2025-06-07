@@ -8,7 +8,7 @@ It serves as a crucial component for relaying balloon flight data (including GPS
 from the ground station to the SondeHub centralized database for tracking and visualization.
 
 Author: BG7ZDQ
-Date: 2025/05/25
+Date: 2025/06/06
 Version: 0.0.1
 LICENSE: GNU General Public License v3.0
 
@@ -25,27 +25,28 @@ int send_https_json(const wchar_t *host, const wchar_t *path, const char *json_d
 
 int main(int argc, char *argv[]) {
     if (argc < 12) {
-        printf("用法: %s <上传者呼号> <接收时间> <球上时间> <经度> <纬度> <高度> <航向角> <GPS卫星数> <地面站经度> <地面站纬度> <地面站高度>\n", argv[0]);
+        printf("用法: %s <上传者呼号> <接收时间> <球上时间> <球上温度> <经度> <纬度> <高度> <航向角> <GPS卫星数> <地面站经度> <地面站纬度> <地面站高度>\n", argv[0]);
         return 1;
     }
 
     const char *uploader_callsign = argv[1];
     const char *time_received     = argv[2];
     const char *datetime          = argv[3];
-    const char *lon               = argv[4];
-    const char *lat               = argv[5];
-    const char *alt               = argv[6];
-    const char *heading           = argv[7];
-    const char *sats              = argv[8];
-    const char *uplon             = argv[9];
-    const char *uplat             = argv[10];
-    const char *upalt             = argv[11];
+    const char *temp              = argv[4];
+    const char *lon               = argv[5];
+    const char *lat               = argv[6];
+    const char *alt               = argv[7];
+    const char *heading           = argv[8];
+    const char *sats              = argv[9];
+    const char *uplon             = argv[10];
+    const char *uplat             = argv[11];
+    const char *upalt             = argv[12];
 
     // 构造 telemetry JSON 数据
     char telemetry_json[2048];
     int telemetry_json_len = snprintf(telemetry_json, sizeof(telemetry_json),
         "[{"
-        "\"dev\":\"BG7ZDQ\","
+        //"\"dev\":\"BG7ZDQ\","
         "\"software_name\":\"BG7ZDQ_HAB_GS\","
         "\"software_version\":\"0.0.1\","
         "\"uploader_callsign\":\"%s\","
@@ -56,6 +57,7 @@ int main(int argc, char *argv[]) {
         "\"lon\":%s,"
         "\"alt\":%s,"
         "\"frequency\":435.4,"
+        "\"temp\":%s,"
         "\"heading\":%s,"
         "\"sats\":%s,"
         "\"uploader_position\":[%s,%s,%s]"
@@ -64,6 +66,7 @@ int main(int argc, char *argv[]) {
         time_received,
         datetime,
         lat, lon, alt,
+        temp,
         heading,
         sats,
         uplat, uplon, upalt

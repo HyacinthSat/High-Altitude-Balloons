@@ -7,7 +7,7 @@ The program real-time parses and displays the balloon's GPS information, integra
 providing a comprehensive ground monitoring and data visualization solution for HAB missions.
 
 Author: BG7ZDQ
-Date: 2025/05/25
+Date: 2025/06/06
 Version: 0.0.1
 LICENSE: GNU General Public License v3.0
 """
@@ -64,7 +64,6 @@ class GUI(QWidget):
         self.setFixedSize(800, 510)
         self.setWindowTitle('气球地面站：The Ground Station Software of HAB')
         self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         self.SET_window = None
         self.QSO_window = None 
@@ -412,6 +411,7 @@ class GUI(QWidget):
                     self.balloon_spd = float(fields[6])
                     self.balloon_sats = int(fields[7])
                     self.balloon_heading = float(fields[8])
+                    self.balloon_temprature = float(fields[9])
                     
                     # 更新地图
                     self.update_map_position()
@@ -444,9 +444,9 @@ class GUI(QWidget):
                     formatted = adjusted_time.strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
 
                     # 调用 SondeHub API接口
-                    # sondehub_dev.exe <上传者呼号> <接收时间> <球上时间> <经度> <纬度> <高度> <航向角> <GPS卫星数> <地面站经度> <地面站纬度> <地面站高度>
+                    # sondehub.exe <上传者呼号> <接收时间> <球上时间> <球上温度> <经度> <纬度> <高度> <航向角> <GPS卫星数> <地面站经度> <地面站纬度> <地面站高度>
                     try:
-                        subprocess.Popen(["./sondehub", f"{self.callsign}", f"{formatted}", f"{self.balloon_time}", f"{self.balloon_lng}", f"{self.balloon_lat}", f"{self.balloon_alt}", f"{self.balloon_heading}", f"{self.balloon_sats}", f"{self.local_lng}", f"{self.local_lat}", f"{self.local_alt}"])
+                        subprocess.Popen(["./sondehub", f"{self.callsign}", f"{formatted}", f"{self.balloon_time}", f"{self.balloon_temprature}", f"{self.balloon_lng}", f"{self.balloon_lat}", f"{self.balloon_alt}", f"{self.balloon_heading}", f"{self.balloon_sats}", f"{self.local_lng}", f"{self.local_lat}", f"{self.local_alt}"])
                     except Exception as e:
                         self.debug_info(f"SondeHub上传失败: {e}")
                         return False
@@ -495,7 +495,7 @@ class GUI(QWidget):
         elif "Camera Calibrate" in text:
             self.Camera_status_icon.setPixmap(correct)
             self.debug_info("相机校准完成！")
-        elif "GPS Initializing!" in text:
+        elif "GPS Initializing" in text:
             self.GPS_status_icon.setPixmap(hourglass)
             self.debug_info("GPS初始化中...")
         elif "GPS init Completed" in text:
@@ -512,6 +512,7 @@ class GUI(QWidget):
         elif "SSDV End" in text:
             self.debug_info(f"第 {self.img_num} 张图片接收完成")
             self.debug_info(f"共收到 {self.frame_num} 帧")
+        # 如果是其他信息，直接显示在调试信息框中
         else:
             self.debug_info(f"收到信息：{text}")
 
@@ -880,7 +881,6 @@ class QSO_Windows(QWidget):
         self.setFixedSize(800, 510)
         self.setWindowTitle('数字通信试验')
         self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
-        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         # 存储传入的参数
         self.callsign = callsign
@@ -890,7 +890,7 @@ class QSO_Windows(QWidget):
 
         # 构建信息用的参数
         self.ToCallSign = "CQ"
-        self.ToMSG = "Hello!"
+        self.ToMSG = "测试信息"
 
         # 拼装后的信息
         self.TofullMSG = ""
@@ -1102,8 +1102,7 @@ class QSO_Windows(QWidget):
         current_time = datetime.now().strftime("%H:%M:%S")
 
         # 构建消息字符串：##ToCall,FmCall,Grid,INFO\n
-        # 调试版本
-        # full_msg = f"** ##RELAY,{to_call},{self.callsign},{self.grid},{msg} **"
+        # 调试版本 full_msg = f"** ##RELAY,{to_call},{self.callsign},{self.grid},{msg} **"
         full_msg = f"##{to_call},{self.callsign},{self.grid},{msg}\n"
 
         # 保存完整消息
@@ -1147,7 +1146,7 @@ class QSO_Windows(QWidget):
         self.info_table.setItem(row_position, 2, item_target_call)
 
         # 信息
-        item_message = QTableWidgetItem(f"{grid},{message}")
+        item_message = QTableWidgetItem(f"{grid}, {message}")
         item_message.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.info_table.setItem(row_position, 3, item_message)
 
