@@ -3,8 +3,8 @@
 #define SSDV_IMG_BUFF_SIZE 128          // 喂给SSDV编码器的缓冲区大小
 #define SSDV_OUT_BUFF_SIZE 256          // 用于存放编码后SSDV数据包的缓冲区
 #define SSDV_SIZE_NOFEC 256             // 标准SSDV包大小 (无FEC)
-#define CAM_CALIBRATE 10                // 摄像头校准次数
-#define DEBUG_MODE true                 // 开发状态
+#define CAM_CALIBRATE 5                 // 摄像头校准次数
+#define DEBUG_MODE false                // 开发状态
 
 // 功能头文件
 #include "freertos/FreeRTOS.h"
@@ -19,8 +19,14 @@
 #include "WiFi.h"
 #include "ssdv.h"
 
+// 启用温度传感器
+extern "C" uint8_t temprature_sens_read();
+
 // FreeRTOS 相关全局变量
 SemaphoreHandle_t xSerialMutex;
+TaskHandle_t ssdvTaskHandle = NULL;
+TaskHandle_t gpsTaskHandle = NULL;
+TaskHandle_t relayTaskHandle = NULL;
 
 // 初始化状态
 bool Initialization_Status = true;
@@ -41,8 +47,8 @@ uint8_t ssdv_out_buff[SSDV_OUT_BUFF_SIZE];   // SSDV编码器生成的包会存�
 // 传输数据（端口短缺，使用主串口连接射频设备）
 void Transmit_Text(const char* format, ...) {
 
-  // 尝试获取互斥锁，等待最多200ms
-  if (xSerialMutex != NULL && xSemaphoreTake(xSerialMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+  // 尝试获取互斥锁，等待最多500ms
+  if (xSerialMutex != NULL && xSemaphoreTake(xSerialMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
     char buffer[256];
     va_list args;
     va_start(args, format);
@@ -50,7 +56,7 @@ void Transmit_Text(const char* format, ...) {
     va_end(args);
 
     // 必要的延时，避免射频模块丢字
-    delay(50);
+    vTaskDelay(40);
     Serial.print(buffer);
     Serial.flush();
 
@@ -58,7 +64,7 @@ void Transmit_Text(const char* format, ...) {
     xSemaphoreGive(xSerialMutex);
   } else {
     // 获取锁失败即进行错误提醒
-    Serial.print("** 卧槽这里怎么出错了 **");
+    Serial.print("** 错误：文本数据互斥锁冲突 **");
     Happen_Error();
   }
 }
@@ -66,11 +72,11 @@ void Transmit_Text(const char* format, ...) {
 // 传输二进制数据
 void Transmit_Data(const uint8_t* data, size_t length) {
 
-  // 尝试获取互斥锁，等待最多200ms
-  if (xSerialMutex != NULL && xSemaphoreTake(xSerialMutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+  // 尝试获取互斥锁，等待最多500ms
+  if (xSerialMutex != NULL && xSemaphoreTake(xSerialMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
 
     // 必要的延时，避免射频模块丢字
-    delay(50);
+    vTaskDelay(40);
     Serial.write(data, length);
     Serial.flush();
 
@@ -78,7 +84,7 @@ void Transmit_Data(const uint8_t* data, size_t length) {
     xSemaphoreGive(xSerialMutex);
   } else {
     // 获取锁失败即进行错误提醒
-    Serial.print("** 卧槽怎么这里也可以出错 **");
+    Serial.print("** 错误：二进制数据互斥锁冲突 **");
     Happen_Error();
   }
 
@@ -115,7 +121,7 @@ void ready_reminder() {
 
 // 初始化就绪检查
 void Initialize_Check() {
-  if (DEBUG_MODE) Transmit_Text("** Note - Development Mode. **");
+  if (DEBUG_MODE) Transmit_Text("** 注意：处于开发者模式 **");
   delay(2000);
   if (Initialization_Status) {
     ready_reminder();
@@ -186,7 +192,7 @@ void Camera_Calibrate() {
 // GPS 初始化
 void Initialize_GPS_Module(unsigned long timeout_ms = 200000) {
   delay(2000);
-  Transmit_Text("** Wait - GPS Initializing! **");
+  Transmit_Text("** Wait - GPS Initializing... **");
   unsigned long start = millis();
 
   if (DEV_Pass("GPS_Initialize")) return;
@@ -222,7 +228,7 @@ void Watch_Doge() {
     // 看门狗超时时间
     .timeout_ms = 30000,
     // 配置空闲核心的看门狗行为
-    .idle_core_mask = (1 << 0) | (1 << 1),
+    .idle_core_mask = (1 << 1),
     // 超时时触发恐慌并重启
     .trigger_panic = true
   };
@@ -232,9 +238,13 @@ void Watch_Doge() {
 }
 
 // 构建类 UKHAS 格式的遥测数据帧
-// $$CALLSIGN,Frame_Counter,HH:MM:SS,latitude,longitude,altitude,speed,sats,heading
+// $$CALLSIGN,Frame_Counter,Time,Latitude,Longitude,Altitude,Speed,Sats,Heading,Temprature,Voltage(有待实现)
 uint16_t Frame_Counter = 0;
 void Build_Telemetry_Frame() {
+
+  // 获取当前片上温度
+  float ChipTemp = (temprature_sens_read() - 32) / 1.8;
+
   // 先拼装标准格式的时间
   snprintf(gps_time, sizeof(gps_time),
     "%04d-%02d-%02dT%02d:%02d:%02dZ",
@@ -248,7 +258,7 @@ void Build_Telemetry_Frame() {
 
   // 再拼装遥测字符串
   snprintf(gpsMessage, sizeof(gpsMessage),
-    "$$%s,%d,%s,%.6f,%.6f,%.2f,%.2f,%d,%.2f",
+    "$$%s,%d,%s,%.6f,%.6f,%.2f,%.2f,%d,%.2f,%.2f",
     SSDV_CALLSIGN,              // 呼号
     Frame_Counter,              // 帧数
     gps_time,                   // 时间
@@ -257,7 +267,8 @@ void Build_Telemetry_Frame() {
     gps.altitude.meters(),      // 高度
     gps.speed.kmph(),           // 速度
     gps.satellites.value(),     // 卫星数
-    gps.course.deg()            // 航向角
+    gps.course.deg(),           // 航向角
+    ChipTemp                    // 摄氏度
   );
 
   Frame_Counter += 1;
@@ -271,7 +282,7 @@ void Create_GPS_Task() {
     4096,                     // 堆栈大小
     NULL,                     // 传递参数
     configMAX_PRIORITIES - 2, // 中优先级
-    NULL,                     // 任务句柄
+    &gpsTaskHandle,           // 任务句柄
     1                         // 运行核心
   );
 }
@@ -285,11 +296,14 @@ void V_Transmit_GPS_Task(void *pvParameters) {
     return;
   }
 
+  // 设定每 20 秒执行一次  
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(20000);
+
   // 将当前任务加入 WDT 监控（注册看门狗）
   esp_task_wdt_add(NULL); 
 
   for (;;) {
-    
     // 喂狗
     esp_task_wdt_reset();
 
@@ -306,14 +320,11 @@ void V_Transmit_GPS_Task(void *pvParameters) {
       Transmit_Text("** %s **", gpsMessage);
 
       // 每 20 秒发送一次
-      for (int i = 0; i < 4; i++) {
-        esp_task_wdt_reset(); // 喂狗
-        vTaskDelay(pdMS_TO_TICKS(5000));
-      }
+      vTaskDelayUntil(&xLastWakeTime, xFrequency);
 
     } else {
-      // 过 100 毫秒重新检查再发送
-      vTaskDelay(pdMS_TO_TICKS(100));
+      // 过 1 秒重新检查再发送
+      vTaskDelay(pdMS_TO_TICKS(1000));
     }
   }
 }
@@ -326,7 +337,7 @@ void Create_Relay_Task() {
     4096,                     // 堆栈大小
     NULL,                     // 传递参数
     configMAX_PRIORITIES - 3, // 低优先级
-    NULL,                     // 任务句柄
+    &relayTaskHandle,         // 任务句柄
     1                         // 运行核心
   );
 }
@@ -407,8 +418,8 @@ void V_Relay_Task(void *pvParameters) {
       currentRelayBuffer[0] = '\0';
     }
         
-    // 降低任务优先级，让其他任务也有机会运行，避免饿死其他任务
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // 每 200 毫秒运行一次
+    vTaskDelay(pdMS_TO_TICKS(200));
     
     // 喂狗
     esp_task_wdt_reset();
@@ -423,8 +434,8 @@ void Create_SSDV_Task() {
     4096,                     // 堆栈大小
     NULL,                     // 传递参数
     configMAX_PRIORITIES - 1, // 高优先级
-    NULL,         // 任务句柄
-    0                         // 运行核心
+    &ssdvTaskHandle,          // 任务句柄
+    1                         // 运行核心
   );
 }
 
@@ -548,7 +559,7 @@ void setup() {
 
   /* --- 阶段 1: 基础硬件和服务初始化 --- */
   delay(5000);                                 // 等待五秒，保证上电稳定
-  pinMode(BUZZ, OUTPUT);                       // 配置告警IO
+  pinMode(BUZZ, OUTPUT);                       // 配置告警 IO
   digitalWrite(BUZZ, LOW);                     // 初始化为低电平
   Serial.begin(9600);                          // 设置主串口波特率
   xSerialMutex = xSemaphoreCreateMutex();      // 创建主串口互斥锁
