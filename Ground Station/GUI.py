@@ -7,8 +7,8 @@ The program real-time parses and displays the balloon's GPS information, integra
 providing a comprehensive ground monitoring and data visualization solution for HAB missions.
 
 Author: BG7ZDQ
-Date: 2025/06/06
-Version: 0.0.1
+Date: 2025/06/12
+Version: 0.0.2
 LICENSE: GNU General Public License v3.0
 """
 
@@ -17,6 +17,7 @@ import os
 import sys
 import serial
 import subprocess
+import numpy as np
 from serial.tools import list_ports
 from configparser import RawConfigParser
 from PyQt6.QtGui import QIcon, QPixmap, QColor
@@ -24,7 +25,6 @@ from datetime import datetime, timedelta, timezone
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import Qt, QUrl, QTimer, QTime, QThread, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QPlainTextEdit, QMessageBox, QComboBox, QLineEdit, QFormLayout, QHeaderView, QTableWidget, QVBoxLayout, QTableWidgetItem, QAbstractItemView, QDialog
-from PyQt6.QtCore import QTimer, QTime, Qt
 
 # 禁用 GPU 加速
 os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu --disable-software-rasterizer'
@@ -37,7 +37,7 @@ title_style = 'color: #3063AB; font-family: 微软雅黑; font: bold 12pt; borde
 callsign_style = 'color: #3063AB; font-family: 微软雅黑; font: bold 16pt; border: none;'
 Common_button_style = 'QPushButton {background-color: #3498db; color: #ffffff; border-radius: 5px; padding: 6px; font-size: 12px;} QPushButton:hover {background-color: #2980b9;} QPushButton:pressed {background-color: #21618c;}'
 TextEdit_style = 'QPlainTextEdit {background-color: #FFFFFF; color: #3063AB; border: 1px solid #3498db; border-radius: 5px; padding: 1px; font-family: 微软雅黑; font-size: 12px;}'
-ComboBox_style = 'QComboBox {background-color: #ffffff; border: 1px solid #3498db; border-radius: 3px; padding: 2px; min-width: 6em; font: bold 10pt "微软雅黑"; color: #3063AB;}QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 20px; border-left: 1px solid #3498db;}QComboBox::down-arrow { image: url(UI/arrow.svg); width: 10px; height: 10px;}QComboBox QAbstractItemView { background: #ffffff; selection-background-color: #89CFF0; selection-color: #000000; border: 1px solid #3498db; outline: 0; font: 10pt "微软雅黑";}'
+ComboBox_style = 'QComboBox {background-color: #ffffff; border: 1px solid #3498db; border-radius: 3px; padding: 2px; min-width: 6em; font: bold 10pt "微软雅黑"; color: #3063AB;} QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 20px; border-left: 1px solid #3498db;}QComboBox::down-arrow { image: url(UI/arrow.svg); width: 10px; height: 10px;} QComboBox QAbstractItemView { background: #ffffff; selection-background-color: #89CFF0; selection-color: #000000; border: 1px solid #3498db; outline: 0; font: 10pt "微软雅黑";}'
 LineEdit_style = 'QLineEdit { background-color: #FFFFFF; color: #3063AB; border: 1px solid #3498db; border-radius: 5px; padding: 1px; font-family: 微软雅黑; font-size: 12px; }'
 frame_style = 'border: 1px solid #AAAAAA; border-radius: 4px;;'
 
@@ -65,8 +65,10 @@ class GUI(QWidget):
         self.setWindowTitle('气球地面站：The Ground Station Software of HAB')
         self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
 
+        # 窗口状态
         self.SET_window = None
-        self.QSO_window = None 
+        self.QSO_window = None
+        self.Command_window = None
         self.Radio_Serial_Thread = None
 
         # 气球信息
@@ -74,6 +76,10 @@ class GUI(QWidget):
         self.balloon_lng = 0
         self.balloon_alt = 0
         self.balloon_time = "2025-05-25T00:00:00Z"
+
+        # 旋转器信息
+        self.Rotator_AZ = 00.00
+        self.Rotator_EL = 90.00
 
         # 图像编号
         self.filename  = ''
@@ -329,6 +335,11 @@ class GUI(QWidget):
         self.QSO_button.setStyleSheet(Common_button_style)
         self.QSO_button.clicked.connect(self.QSO)
 
+        self.QSO_button = QPushButton("命令", self)
+        self.QSO_button.setGeometry(620, 387, 50, 27)
+        self.QSO_button.setStyleSheet(Common_button_style)
+        self.QSO_button.clicked.connect(self.Command)
+
         self.DEBUG_output = QPlainTextEdit(self)
         self.DEBUG_output.setReadOnly(True)
         self.DEBUG_output.setGeometry(420, 420, 330, 65)
@@ -403,15 +414,23 @@ class GUI(QWidget):
             self.Frame_type_output.adjustSize()
             try:
                 fields = text[2:].split(",")
-                if len(fields) >= 9:
+                if len(fields) >= 10:
                     self.balloon_time = fields[2]
-                    self.balloon_lat = float(fields[3])
-                    self.balloon_lng = float(fields[4])
-                    self.balloon_alt = float(fields[5])
+                    new_balloon_lat = float(fields[3])
+                    new_balloon_lng = float(fields[4])
+                    new_balloon_alt = float(fields[5])
                     self.balloon_spd = float(fields[6])
                     self.balloon_sats = int(fields[7])
                     self.balloon_heading = float(fields[8])
                     self.balloon_temprature = float(fields[9])
+                    
+                    # 控制旋转器
+                    self.Rotator_AZ, self.Rotator_EL = self.calculate_az_el(new_balloon_lat, new_balloon_lng, new_balloon_alt)
+
+                    # 更新数值
+                    self.balloon_lat = new_balloon_lat
+                    self.balloon_lng = new_balloon_lng
+                    self.balloon_alt = new_balloon_alt
                     
                     # 更新地图
                     self.update_map_position()
@@ -433,9 +452,9 @@ class GUI(QWidget):
                     self.GPS_SATS_NUM.adjustSize()
                     self.GPS_heading_NUM.setText(f"{self.balloon_heading:.2f}")
                     self.GPS_heading_NUM.adjustSize()
-                    self.rotator_az_NUM.setText("---.--")
+                    self.rotator_az_NUM.setText(f"{self.Rotator_AZ:.2f}")
                     self.rotator_az_NUM.adjustSize()
-                    self.rotator_el_NUM.setText("---.--")
+                    self.rotator_el_NUM.setText(f"{self.Rotator_EL:.2f}")
                     self.rotator_el_NUM.adjustSize()
 
                     # 获取现在的时间并将其格式化
@@ -528,7 +547,8 @@ class GUI(QWidget):
         if start == -1 or len(self.buffer) - start < frame_len: return False
         frame = self.buffer[start:start + frame_len]
 
-        # 接收到SSDV数据包证明摄像头工作正常，初始化正常
+        # 接收到SSDV数据包证明数传正常，摄像头工作正常，初始化正常
+        self.Data_status_icon.setPixmap(correct)
         self.Camera_status_icon.setPixmap(correct)
         self.init_status_icon.setPixmap(correct)
 
@@ -635,11 +655,8 @@ class GUI(QWidget):
 
     # 连接天线旋转器串口
     def Connect_Rotator_COM(self):
+        QMessageBox.warning(self, "警告", "天线旋转器功能尚未实现")
         self.debug_info("旋转器功能尚未实现")
-        if (self.local_alt == 0 and self.local_lat == 0 and self.local_lng == 0):
-            self.debug_info("请先输入本地经纬度")
-            self.SET()
-            return
 
     # 刷新系统中所有可用串口信息，并更新到下拉框中
     def Update_COM_Info(self):
@@ -702,6 +719,110 @@ class GUI(QWidget):
         self.Radio_COM_Combo.blockSignals(False)
         self.Rotator_COM_Combo.blockSignals(False)
 
+    # 以 WGS-84 坐标系为基准，根据地面站与气球的经纬度和高度计算方位角与俯仰角
+    def calculate_az_el(self, new_balloon_lat, new_balloon_lng, new_balloon_alt):
+
+        # 从大地坐标系转换为地心固连坐标系
+        def geodetic_to_ecef(lat_deg, lon_deg, alt_m):
+            a = 6378137.0
+            f = 1 / 298.257223563
+            e2 = f * (2 - f)
+
+            lat = np.radians(lat_deg)
+            lon = np.radians(lon_deg)
+
+            N = a / np.sqrt(1 - e2 * np.sin(lat)**2)
+
+            x = (N + alt_m) * np.cos(lat) * np.cos(lon)
+            y = (N + alt_m) * np.cos(lat) * np.sin(lon)
+            z = (N * (1 - e2) + alt_m) * np.sin(lat)
+
+            return np.array([x, y, z])
+
+        # 将 ECEF 向量转换为 ENU 向量
+        def ecef_to_enu(ecef_balloon, ecef_local, lat_deg, lon_deg):
+            lat = np.radians(lat_deg)
+            lon = np.radians(lon_deg)
+
+            dx = ecef_balloon - ecef_local
+
+            slat = np.sin(lat)
+            clat = np.cos(lat)
+            slon = np.sin(lon)
+            clon = np.cos(lon)
+
+            # 构建旋转矩阵，从 ECEF 坐标系旋转到 ENU 坐标系
+            R = np.array([
+                [-slon       ,  clon       , 0   ],
+                [-clon * slat, -slon * slat, clat],
+                [ clon * clat,  slon * clat, slat]
+            ])
+
+            return R @ dx
+
+        # 将 ENU 向量转换为方位角与俯仰角
+        def enu_to_az_el(enu):
+            east, north, up = enu
+            az = np.degrees(np.arctan2(east, north)) % 360
+            hor_dist = np.sqrt(east**2 + north**2)
+            el = np.degrees(np.arctan2(up, hor_dist))
+            return az, el
+        
+        # 计算两个角度的无符号最小差值
+        def angle_diff(a, b):
+            diff = abs(a - b) % 360
+            return diff if diff <= 180 else 360 - diff
+
+        # 计算两个角度的有符号最小差值
+        def angle_diff_sign(a, b):
+            diff = (a - b + 180) % 360 - 180
+            return diff
+
+        # 环绕角平滑滤波 (AZ)
+        # AZ 轴受到的主要影响为平面差距过小以及定位数据错误带来的剧烈变化
+        def angle_smooth(old_angle, new_angle, alpha=0.3):
+            # 排除平面差距过小带来的剧烈反应
+            if angle_diff(old_angle, new_angle) > 30 and abs(self.balloon_lat - self.local_lat) < 0.00027 and abs(self.balloon_lng - self.local_lng) < 0.00027 :
+                return old_angle
+            # 排除定位数据错误带来的剧烈反应
+            elif abs(self.balloon_lat - new_balloon_lat) > 0.01 or abs(self.balloon_lng - new_balloon_lng) > 0.01 :
+                return old_angle
+            else:
+                diff = angle_diff_sign(new_angle, old_angle)
+                smoothed = (old_angle + alpha * diff) % 360
+                return smoothed
+
+        # 线性角平滑滤波 (EL)
+        # EL 轴受到的影响主要为定位数据错误带来的剧烈变化
+        def linear_smooth(old_val, new_val, alpha=0.5):                
+            # 排除定位数据错误带来的剧烈反应
+            if abs(old_val - new_val) > 20 or abs(self.balloon_alt - new_balloon_alt) > 200 :
+                return old_val
+            else:
+                return alpha * new_val + (1 - alpha) * old_val
+
+        # 仅在判定放飞后进行计算
+        if self.balloon_alt - self.local_alt >= 50:
+            # 计算地面站的 ECEF 坐标
+            ecef_local = geodetic_to_ecef(self.local_lat, self.local_lng, self.local_alt)
+            # 计算气球的 ECEF 坐标
+            ecef_balloon = geodetic_to_ecef(new_balloon_lat, new_balloon_lng, new_balloon_alt)
+            # 计算地面站与气球之间的 ENU 向量
+            enu = ecef_to_enu(ecef_balloon, ecef_local, self.local_lat, self.local_lng)
+            # 将 ENU 向量转换为方位角与俯仰角
+            azimuth, elevation = enu_to_az_el(enu)
+
+            # 用滤波器平滑角度，避免GPS误差导致跳变
+            azimuth_smoothed = angle_smooth(self.Rotator_AZ, azimuth)
+            elevation_smoothed = linear_smooth(self.Rotator_EL, elevation)
+            return azimuth_smoothed, elevation_smoothed
+        
+        # 若未放飞，则旋转器按兵不动，保持零位
+        elif self.Rotator_AZ != 0.00 or self.Rotator_EL != 90.00:
+            return 0.00, 90.00
+        
+        return self.Rotator_AZ, self.Rotator_EL
+
     # 更新气球在地图中的位置
     def update_map_position(self):
         js_code = f"updatePosition({self.balloon_lat}, {self.balloon_lng}, {self.local_lat}, {self.local_lng});"
@@ -724,6 +845,16 @@ class GUI(QWidget):
                 self.QSO_window.tx_message.connect(self.Send_Data_to_Radio)
                 self.rx_message.connect(self.QSO_window.add_info_table_row)
             self.QSO_window.show()
+        else:
+            QMessageBox.warning(self, "警告", "接收机串口未连接，请先连接接收机串口。")
+
+    # 启动命令窗口
+    def Command(self):
+        if self.Radio_Serial_Thread and self.Radio_Serial_Thread.serial and self.Radio_Serial_Thread.serial.is_open:
+            if self.Command_window is None:
+                self.Command_window = Command_Windows()
+                self.Command_window.tx_message.connect(self.Send_Data_to_Radio)
+            self.Command_window.show()
         else:
             QMessageBox.warning(self, "警告", "接收机串口未连接，请先连接接收机串口。")
 
@@ -1263,7 +1394,58 @@ class QSO_Windows(QWidget):
             f"{int((lon % 20) // 2)}{int(lat % 10)}"
             f"{chr(int((lon % 2) * 12) + 97)}{chr(int((lat % 1) * 24) + 97)}"
         )
-    
+
+# 命令窗口
+class Command_Windows(QWidget):
+    # 定义一个信号，用于发射时向主窗口传输拼装好的信息
+    tx_message = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+
+        # 窗口属性
+        icon = QIcon('UI/logo.ico')
+        self.setWindowIcon(icon)
+        self.resize(250, 100)
+        self.setFixedSize(250, 100)
+        self.setWindowTitle('命令发送')
+        self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+
+        self.init_ui()
+
+    def init_ui(self):
+        # 使用垂直布局
+        layout = QVBoxLayout(self)
+
+        # 命令输入框
+        self.command_input = QLineEdit(self)
+        self.command_input.setPlaceholderText("在此输入要发送的命令...")
+        self.command_input.setStyleSheet(LineEdit_style)
+        layout.addWidget(self.command_input)
+
+        # 发送按钮
+        self.send_button = QPushButton("发送", self)
+        self.send_button.setStyleSheet(Common_button_style)
+        self.send_button.clicked.connect(self.send_command)
+        layout.addWidget(self.send_button)
+
+        self.setLayout(layout)
+
+    # 获取输入框文本并发送
+    def send_command(self):
+
+        # 获取输入框的文本，并移除前后的空白字符
+        command_text = self.command_input.text().strip()
+
+        # 检查命令是否为空
+        if not command_text:
+            QMessageBox.warning(self, "警告", "发送的命令不能为空。")
+            return
+
+        # 发射信号，将文本传递给主窗口的槽函数
+        self.tx_message.emit(command_text + '\n')
+
 # 串口连接线程
 class SerialConnection(QThread):
 
