@@ -19,14 +19,14 @@ import select
 from machine import UART, Pin
 
 """ 参数定义 """
-# 允许的波特率与信道
-VALID_BAUD_RATES = {2400, 9600, 38400, 115200}
-VALID_CHANNELS = {f"{i:03d}" for i in range(1, 17)}
+# 允许的波特率与信道号
+VALID_BAUD = {2400, 9600, 38400, 115200}
+VALID_CHAN = {f"{i:03d}" for i in range(1, 17)}
 
 # AT 参数定义
 AT_MODE_ENTRY_DELAY_S = 0.05  # 进入AT模式需要的稳定时间
 AT_MODE_EXIT_DELAY_S = 0.1    # 退出AT模式后模块重启时间
-AT_CMD_INTERVAL_S = 0.1       # 发送AT指令后的等待时间
+AT_CMD_INTERVAL_S = 0.1       # 发送AT指令后所需等待时间
 
 # 硬件引脚定义
 CTRL_PIN = Pin(6, Pin.OUT)
@@ -34,11 +34,14 @@ UART_TX_PIN = Pin(4)
 UART_RX_PIN = Pin(5)
 UART_ID = 1
 
-# AT指令模式固定通信参数
-AT_MODE_BAUD_RATE = 9600
-
 # 配置文件名
 CONFIG_FILE = "config.ini"
+
+# 上电时进入AT指令模式的固定通信参数
+POWER_ON_AT_MODE_BAUD_RATE = 9600
+
+# 当前模块的运行波特率
+current_baud_rate = 0 
 
 # 运行状态
 state = True
@@ -46,80 +49,59 @@ state = True
 """ 函数定义 """
 # 验证波特率是否有效
 def is_valid_baud(baud):
-    return baud in VALID_BAUD_RATES
+    return baud in VALID_BAUD
 
-# 验证信道是否有效
-def is_valid_channel(chan):
-    return chan in VALID_CHANNELS
+# 验证信道号是否有效
+def is_valid_chan(chan):
+    return chan in VALID_CHAN
 
 # 从 config.ini 读取配置
 def read_config():
-    baud = None
-    chan = None
-    valid = True
+    default_baud = 9600
+    default_chan = "006"
 
     try:
-        # 读取配置文件
+        # 打开配置文件
         with open(CONFIG_FILE, "r") as f:
+            config_data = {}
+            # 设置配置格式
             for line in f:
-                line = line.strip()
+                if '=' in line:
+                    key, value = line.strip().split('=', 1)
+                    config_data[key] = value
 
-                # 处理 baud 参数
-                if line.startswith("baud="):
-                    # 提取并验证波特率是否有效
-                    try:
-                        val = int(line.split("=")[1])
-                        if is_valid_baud(val):
-                            baud = val
-                        else:
-                            valid = False
-                    # 解析失败也视为无效
-                    except ValueError:
-                        valid = False
+            # 读取字段值
+            baud_str = config_data.get("baud")
+            chan_str = config_data.get("chan")
+            baud = int(baud_str) if baud_str else None
+            chan = str(chan_str) if chan_str else None
+            
+            # 验证读取到的值
+            if baud and is_valid_baud(baud) and chan and is_valid_chan(chan):
+                return baud, chan
+            else:
+                raise ValueError("Invalid config parameters")
 
-                # 处理 chan 参数
-                elif line.startswith("chan="):
-                    try:
-                        val = line.split("=")[1]
-                        if is_valid_channel(val):
-                            chan = val
-                        else:
-                            valid = False
-                    # 解析失败也视为无效
-                    except ValueError:
-                        valid = False
-
-    # 异常处理
-    except OSError:
-        # 配置文件不存在，提示并写入默认值
-        usb_log("** [注意] 未找到配置文件，将使用默认配置 **")
-        baud = 9600
-        chan = "004"
-        update_config(baud, chan)
-        return baud, chan
-
-    # 其他读取错误
+    # 处理文件不存在或内容无效的情况
+    except (OSError, ValueError) as e:
+        if isinstance(e, OSError):
+            usb_log("** [注意] 配置文件未找到，将使用默认配置 **")
+        else:
+            usb_log("** [错误] 配置文件值无效，将使用默认配置 **")
+        
+        update_config(default_baud, default_chan)
+        return default_baud, default_chan
+    # 处理其他异常错误
     except Exception as e:
-        usb_log(f"** [错误] 配置文件读取失败: {e} **")
-        baud = 9600
-        chan = "004"
-        update_config(baud, chan)
-        return baud, chan
-
-    # 如果文件存在但参数非法或缺失，仍使用默认值并写回文件
-    if not valid or baud is None or chan is None:
-        usb_log("** [错误] 配置文件参数无效，将使用默认配置 **")
-        baud = 9600
-        chan = "004"
-        update_config(baud, chan)
-
-    return baud, chan
+        usb_log(f"** [错误] 配置文件读取异常，将使用默认配置: {e} **")
+        return default_baud, default_chan
 
 # 更新 config.ini 文件
 def update_config(baud=None, chan=None):
     config = {}
     changed = False
 
+    # 读取先前的配置
     try:
         with open(CONFIG_FILE, "r") as f:
             for line in f:
@@ -127,23 +109,23 @@ def update_config(baud=None, chan=None):
                     k, v = line.strip().split('=', 1)
                     config[k] = v
 
-    # 配置文件不存在，忽略并初始化 config
+    # 配置文件不存在
     except OSError:
         config = {}
         changed = True
 
-    # 判断是否需要更新波特率，仅在值变化时更新
+    # 判断是否需要更新波特率
     if baud is not None and is_valid_baud(baud):
         if config.get("baud") != str(baud):
             config["baud"] = str(baud)
             changed = True
 
-    # 判断是否需要更新信道,，仅在值变化时更新
-    if chan is not None and is_valid_channel(chan):
+    # 判断是否需要更新信道号
+    if chan is not None and is_valid_chan(chan):
         if config.get("chan") != chan:
             config["chan"] = chan
             changed = True
-
+    
     # 若配置未变，则无需写入文件
     if not changed:
         return
@@ -186,9 +168,9 @@ def exit_at_mode():
     time.sleep(AT_MODE_EXIT_DELAY_S)
 
 # 发送AT指令并读取响应
-def send_at_command(uart, cmd, response_timeout=300):
-    if uart.any():
-        uart.read() # 清空缓存
+def send_at_command(uart, cmd, response_timeout=300, silent=False):
+    while uart.any():
+        uart.read()
     
     uart.write(cmd.encode() if isinstance(cmd, str) else cmd)
     time.sleep(AT_CMD_INTERVAL_S)
@@ -196,98 +178,149 @@ def send_at_command(uart, cmd, response_timeout=300):
     response = b''
     start_time = time.ticks_ms()
     while time.ticks_diff(time.ticks_ms(), start_time) < response_timeout:
-        if uart.any():
-            response += uart.read()
-        
-    if response.strip():
+        data = uart.read()
+        if data:
+            response += data
+    
+    if not silent and response.strip():
         display_response = response.strip().replace(b'\r\n', b' ').replace(b'\n', b' ')
-        usb_log(f"** {display_response} **")
+        usb_log(f"** {display_response} **\n")
     return response
 
+# 探测 AT 模式的正确波特率
+def find_at_baud_rate(last_known_baud,silent=False):
+    
+    # 定义波特率尝试列表
+    baud_rates_to_try = list(dict.fromkeys([last_known_baud] + sorted(list(VALID_BAUD) + [POWER_ON_AT_MODE_BAUD_RATE])))
+    
+    # 尝试进行探测
+    for baud in baud_rates_to_try:
+        usb_log(f"** [调试] 尝试以 {baud} bps 建立 AT 通信 **") if not silent else None
+        uart = init_uart(baud)
+        response = send_at_command(uart, "AT\r\n", response_timeout=200, silent=True)
+        # 当收到 OK 时判定成功建立连接
+        if response.strip().endswith(b'OK'):
+            usb_log(f"** [调试] 成功以 {baud} bps 建立 AT 通信 **") if not silent else None
+            return uart
+        if uart:
+            uart.deinit()
+
+    # 如果所有尝试都失败了
+    usb_log("** [错误] 无法与模块建立AT通信 **")
+    return init_uart(POWER_ON_AT_MODE_BAUD_RATE)
+
 # 解析来自USB的AT指令并更新配置
-def parse_at_command_and_update_config(cmd_bytes):
+def parse_usb_command(cmd_bytes):
     try:
+        # 按 ASCII 编码尝试解码指令
         try:
-            # 按 ASCII 字符进行解码
             text = cmd_bytes.decode("ASCII")
         except UnicodeDecodeError:
             usb_log("** [错误] 解码失败：指令包含非 ASCII 字符 **")
-            return False, None, None
+            return "error", None, None
 
-        # 去除字符串两端的空白、回车、换行等字符
+        # 去除字符串两端的非预期字符
         clean_text = text.strip()
-
-        # 使用清理后的指令进行解析
-        if not clean_text.startswith("AT+"):
-            # 对于不以 AT+ 开头的指令，视为透明数据
-            return False, None, None
         
         # 处理波特率指令
         if clean_text.startswith("AT+B"):
             val_str = clean_text[4:]
-            baud = int(val_str)  # 这里现在是 int('9600')，可以正常工作
+            baud = int(val_str)
+            # 验证有效性然后交付处理
             if is_valid_baud(baud):
-                update_config(baud=baud)
-                return True, "baud", baud
+                return "config", "baud", baud
             else:
-                usb_log(f"** [错误] 波特率值无效: {baud} **")
-                return False, None, None
+                usb_log(f"** [错误] 波特率无效: {baud} **")
+                return "error", "InvalidBaud", baud
 
         # 处理信道指令
         elif clean_text.startswith("AT+C"):
-            chan = clean_text[4:]
-            if is_valid_channel(chan):
-                update_config(chan=chan)
-                return True, "chan", chan
+            val_str = clean_text[4:]
+            # 验证有效性然后交付处理
+            if is_valid_chan(val_str):
+                return "config", "chan", val_str
             else:
-                usb_log(f"** [错误] 信道值无效: {chan} **")
-                return False, None, None
+                usb_log(f"** [错误] 信道号无效: {val_str} **")
+                return "error", "InvalidChannel", val_str
                 
         # 处理退出指令
         elif clean_text == "AT+EXIT":
-            global state
-            state = False
-            usb_log("** [注意] 收发信机受控退出运行 **")
-            return False, None, None
+            return "control", "exit", None
         
-        # 其他有效但非配置的AT指令
+        # 处理查询指令
+        elif clean_text.startswith(("AT+R", "AT+V", "AT+FU", "AT+P")):
+            return "query", clean_text, None
+        
+        # 处理其他非配置的AT指令
         else:
-            usb_log(f"** [注意] 非配置的AT指令: {clean_text} **")
-            return False, None, None
+            usb_log(f"** [注意] 未知指令: {clean_text} **")
+            return "unknown", clean_text, None
 
+    # 格式错误异常处理
     except (ValueError, IndexError) as e:
-        usb_log(f"** [错误] 指令格式错误或参数无效: {e} **")
-        return False, None, None
+        return "error", "FormatError", str(e)
+    # 捕获其他所有意外错误
     except Exception as e:
-        # 捕获其他所有意外错误
-        usb_log(f"** [严重错误] 解析时发生意外: {e} **")
-        return False, None, None
+        return "error", "Exception", str(e)
 
 # 在运行时处理AT指令
-def handle_runtime_at_command(uart_obj, cmd_bytes):
-    is_valid, param_type, value = parse_at_command_and_update_config(cmd_bytes)
-    
-    if not is_valid:
-        return uart_obj
-        
-    usb_log(f"** [注意] 已将 {param_type} 设置为 {value} **")
-    uart_obj.deinit()
+def execute_at_command(cmd_bytes, uart_obj):
 
-    enter_at_mode()
-    at_uart = init_uart(AT_MODE_BAUD_RATE)
-    send_at_command(at_uart, cmd_bytes.decode().strip() + '\r\n')
-    send_at_command(at_uart, "AT+RX\r\n")
-    at_uart.deinit()
-    exit_at_mode()
+    # 进行解析然后获取信息
+    global current_baud_rate, state
+    cmd_type, param, value = parse_usb_command(cmd_bytes)
+
+    # 如果解析发生错误
+    if cmd_type == "error":
+        usb_log(f"** [错误] 指令处理失败：{param} - {value}**")
+        return uart_obj
+
+    # 如果收到退出指令
+    elif cmd_type == "control" and param == "exit":
+        state = False
+        usb_log("** [注意] 收发信机受控退出运行 **")
+        return uart_obj
+
+    # 如果收到配置指令
+    elif cmd_type == "config":
+        enter_at_mode()
+        at_uart = find_at_baud_rate(current_baud_rate)
+        if param == "baud":
+            response = send_at_command(at_uart, f"AT+B{value}\r\n")
+        elif param == "chan":
+            response = send_at_command(at_uart, f"AT+C{value}\r\n")
+        
+        # 销毁临时uart对象
+        at_uart.deinit()
+        exit_at_mode()
+
+        # 更新配置信息
+        if b"OK" in response:
+            update_config(**{param: value})
+            usb_log(f"** [注意] 参数 {param} 已设置为 {value} **")
+            current_baud_rate = value if param == "baud" else current_baud_rate
+
+        # 重载 UART 配置
+        new_uart = init_uart(current_baud_rate)
+        return new_uart
     
-    new_baud, _ = read_config()
-    new_uart = init_uart(new_baud)
-    
-    usb_log(f"** [注意] 已退出命令模式，现在以{new_baud} bps 运行 **")
-    return new_uart
+    # 如果收到查询指令
+    elif cmd_type == "query":
+        enter_at_mode()
+        at_uart = find_at_baud_rate(current_baud_rate)
+        send_at_command(at_uart, param + '\r\n')
+        exit_at_mode()
+
+        # 销毁临时uart对象
+        at_uart.deinit()
+        return uart_obj
+
+    # 其他类型信息
+    else:
+        return uart_obj
 
 # 从 USB 串口非阻塞地读取一行字节数据
-def usb_readline_bytes():
+def usb_readline_bytes(maxlen=256):
     line = b''
     # 进行非阻塞检查
     while poll.poll(0):
@@ -295,7 +328,7 @@ def usb_readline_bytes():
         char_byte = sys.stdin.buffer.read(1)
         if char_byte:
             line += char_byte
-            if char_byte == b'\n':
+            if char_byte == b'\n' or  len(line) >= maxlen:
                 break
         # 无字可读时退出
         else:
@@ -304,26 +337,30 @@ def usb_readline_bytes():
 
 
 """ 上电初始化 """
+# 读取配置，了解模块上次运行的状态
+target_baud, target_chan = read_config()
+current_baud_rate = target_baud
+
+# 进入 AT 模式
 enter_at_mode()
 
-usb_log("** [调试] 收发信机正在初始化... **")
-target_baud, target_chan = read_config()
+# 自动探测并找到正确的AT通信波特率，返回一个可用的 uart 对象
+serial = find_at_baud_rate(target_baud)
 
-uart1 = init_uart(AT_MODE_BAUD_RATE)
+# 使用探测成功的 uart 对象来发送配置指令
+usb_log(f"** [调试] 波特率将设置为 {target_baud} **\n")
+send_at_command(serial, f"AT+B{target_baud}\r\n")
+usb_log(f"** [调试] 信道号将设置为 {target_chan} **\n")
+send_at_command(serial, f"AT+C{target_chan}\r\n")
+usb_log("** [调试] 读取最终设置... **\n")
+send_at_command(serial, "AT+RX\r\n")
 
-usb_log(f"** [调试] 波特率将设置为 {target_baud} **")
-send_at_command(uart1, f"AT+B{target_baud}\r\n")
-usb_log(f"** [调试] 信道将设置为 {target_chan} **")
-send_at_command(uart1, f"AT+C{target_chan}\r\n")
-usb_log("** [调试] 正在读取最终信息... **")
-send_at_command(uart1, "AT+RX\r\n")
-
-uart1.deinit()
+# 退出 AT 模式
 exit_at_mode()
 
-uart1 = init_uart(target_baud)
-usb_log("** [调试] 初始化完成 **")
-
+# 初始化用于透明传输的串口，并更新全局波特率变量
+serial = init_uart(target_baud)
+current_baud_rate = target_baud
 
 """ 轮询逻辑 """
 # 仅使用 poll 监控 sys.stdin，以规避固件Bug
@@ -337,8 +374,8 @@ while state:
     try:
         # 优先处理来自无线模块的数据
         try:
-            if uart1 and hasattr(uart1, "readinto") and uart1.any():
-                n = uart1.readinto(buf)
+            if serial and hasattr(serial, "readinto") and serial.any():
+                n = serial.readinto(buf)
                 if n is not None and n > 0:
                     usb_raw(buf[:n])
         except Exception as e:
@@ -350,11 +387,11 @@ while state:
             # 检查是否为AT指令
             if usb_line.strip().upper().startswith(b'AT+'):
                 # 调用修改后的AT指令处理函数
-                uart1 = handle_runtime_at_command(uart1, usb_line)
+                serial = execute_at_command(usb_line, serial)
             else:
                 # 作为透明数据直接转发
                 try:
-                    uart1.write(usb_line)
+                    serial.write(usb_line)
                 except Exception as e:
                     usb_log(f"** [错误] 转发时发生错误：{e} **")
 
@@ -366,6 +403,7 @@ while state:
         time.sleep(1)
 
 """ 程序退出清理 """
-uart1.deinit()
+serial.deinit()
+poll.unregister(sys.stdin)
 CTRL_PIN.value(1)
 usb_log("** [提示] 程序终止 **")
