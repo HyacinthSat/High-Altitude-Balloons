@@ -4,7 +4,7 @@
 #define SSDV_OUT_BUFF_SIZE 256          // 用于存放编码后SSDV数据包的缓冲区
 #define SSDV_SIZE_NOFEC 256             // 标准SSDV包大小 (无FEC)
 #define CAM_CALIBRATE 5                 // 摄像头校准次数
-#define DEBUG_MODE false                // 开发状态
+#define DEBUG_MODE true                // 开发状态
 
 // 功能头文件
 #include "freertos/FreeRTOS.h"
@@ -47,58 +47,28 @@ uint8_t ssdv_out_buff[SSDV_OUT_BUFF_SIZE];   // SSDV编码器生成的包会存�
 // 传输数据（端口短缺，使用主串口连接射频设备）
 void Transmit_Text(const char* format, ...) {
 
-  // 尝试获取互斥锁，等待最多500ms
-  if (xSerialMutex != NULL && xSemaphoreTake(xSerialMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-    char buffer[256];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
+  // 拼装
+  char buffer[256];
+  va_list args;
+  va_start(args, format);
+  vsnprintf(buffer, sizeof(buffer), format, args);
+  va_end(args);
 
-    // 必要的延时，避免射频模块丢字
-    vTaskDelay(40);
-    Serial.print(buffer);
-    Serial.flush();
+  // 必要的延时，避免射频模块丢字
+  vTaskDelay(40);
+  Serial.print(buffer);
+  Serial.flush();
 
-    // 释放互斥锁
-    xSemaphoreGive(xSerialMutex);
-  } else {
-    // 获取锁失败即进行错误提醒
-    Serial.print("** 错误：文本数据互斥锁冲突 **");
-    Happen_Error();
-  }
 }
 
 // 传输二进制数据
 void Transmit_Data(const uint8_t* data, size_t length) {
 
-  // 尝试获取互斥锁，等待最多500ms
-  if (xSerialMutex != NULL && xSemaphoreTake(xSerialMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+  // 必要的延时，避免射频模块丢字
+  vTaskDelay(40);
+  Serial.write(data, length);
+  Serial.flush();
 
-    // 必要的延时，避免射频模块丢字
-    vTaskDelay(40);
-    Serial.write(data, length);
-    Serial.flush();
-
-    // 释放互斥锁
-    xSemaphoreGive(xSerialMutex);
-  } else {
-    // 获取锁失败即进行错误提醒
-    Serial.print("** 错误：二进制数据互斥锁冲突 **");
-    Happen_Error();
-  }
-
-}
-
-// 调试函数
-bool DEV_Pass(const char* function) {
-  if (strcmp(function, "GPS_Initialize") == 0 && DEBUG_MODE) {
-    Transmit_Text("** OK - GPS init Completed! **");
-    return true;
-  } else if (strcmp(function, "GPS_Transmit") == 0 && DEBUG_MODE) {
-    return true;
-  }
-  return false;
 }
 
 // 告警提醒函数
@@ -195,7 +165,10 @@ void Initialize_GPS_Module(unsigned long timeout_ms = 200000) {
   Transmit_Text("** Wait - GPS Initializing... **");
   unsigned long start = millis();
 
-  if (DEV_Pass("GPS_Initialize")) return;
+  if (DEBUG_MODE) {
+    Transmit_Text("** OK - GPS init Completed! **");
+    return;
+  }
 
   while (millis() - start < timeout_ms) {
     while (GPS_Serial.available()) {
@@ -245,6 +218,18 @@ void Build_Telemetry_Frame() {
   // 获取当前片上温度
   float ChipTemp = (temprature_sens_read() - 32) / 1.8;
 
+  if(DEBUG_MODE) {
+    // 调试模式：构建一个假的遥测帧，只包含非GPS数据
+    snprintf(gpsMessage, sizeof(gpsMessage),
+      "$$%s,%d,DEBUG_TIME,0.000000,0.000000,0.00,0.00,0,0.00,%.2f",
+      SSDV_CALLSIGN,
+      Frame_Counter,
+      ChipTemp
+    );
+    Frame_Counter += 1;
+    return;
+  }
+
   // 先拼装标准格式的时间
   snprintf(gps_time, sizeof(gps_time),
     "%04d-%02d-%02dT%02d:%02d:%02dZ",
@@ -290,16 +275,6 @@ void Create_GPS_Task() {
 // GPS 遥测发送任务
 void V_Transmit_GPS_Task(void *pvParameters) {
 
-  // 如果处于开发状态就删除任务
-  if (DEV_Pass("GPS_Transmit")) {
-    vTaskDelete(NULL);
-    return;
-  }
-
-  // 设定每 20 秒执行一次  
-  TickType_t xLastWakeTime = xTaskGetTickCount();
-  const TickType_t xFrequency = pdMS_TO_TICKS(20000);
-
   // 将当前任务加入 WDT 监控（注册看门狗）
   esp_task_wdt_add(NULL); 
 
@@ -307,24 +282,39 @@ void V_Transmit_GPS_Task(void *pvParameters) {
     // 喂狗
     esp_task_wdt_reset();
 
-    // 喂数据
-    while (GPS_Serial.available()) {
-      gps.encode(GPS_Serial.read());
-    }
-
-    // 如果有更新就发送
-    if (gps.location.isUpdated()) {
-
-      // 构建遥测帧并发送
+    // 调试模式：直接构建并发送无GPS数据的遥测帧，然后等待
+    if (DEBUG_MODE) {
       Build_Telemetry_Frame();
       Transmit_Text("** %s **", gpsMessage);
 
-      // 每 20 秒发送一次
-      vTaskDelayUntil(&xLastWakeTime, xFrequency);
-
+      // 每 20 秒发送一次遥测数据
+      for (int i = 0; i < 4; i++) {
+        esp_task_wdt_reset(); // 喂狗
+        vTaskDelay(pdMS_TO_TICKS(5000));
+      }
+    // 正常模式：处理真实的GPS数据
     } else {
-      // 过 1 秒重新检查再发送
-      vTaskDelay(pdMS_TO_TICKS(1000));
+      
+      // 喂数据
+      while (GPS_Serial.available()) {
+        gps.encode(GPS_Serial.read());
+      }
+
+      // 如果有更新就发送
+      if (gps.location.isUpdated()) {
+        // 构建遥测帧并发送
+        Build_Telemetry_Frame();
+        Transmit_Text("** %s **", gpsMessage);
+
+        // 每 20 秒发送一次遥测数据
+        for (int i = 0; i < 4; i++) {
+          esp_task_wdt_reset(); // 喂狗
+          vTaskDelay(pdMS_TO_TICKS(5000));
+        }
+      } else {
+        // 过 1 秒重新检查再发送
+        vTaskDelay(pdMS_TO_TICKS(1000));
+      }
     }
   }
 }
@@ -562,7 +552,6 @@ void setup() {
   pinMode(BUZZ, OUTPUT);                       // 配置告警 IO
   digitalWrite(BUZZ, LOW);                     // 初始化为低电平
   Serial.begin(9600);                          // 设置主串口波特率
-  xSerialMutex = xSemaphoreCreateMutex();      // 创建主串口互斥锁
   GPS_Serial.begin(9600, SERIAL_8N1, 15, -1);  // 设置 GPS 串口
   WiFi.mode(WIFI_OFF);                         // 关闭 Wi-Fi
   btStop();                                    // 关闭 蓝牙
