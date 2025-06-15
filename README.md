@@ -7,7 +7,7 @@
 借助实现主要目的基本硬件，额外实现了业余无线电数字中继等功能  
 
 主要作者：[BG7ZDQ](https://github.com/X-MQSI)  
-![气球标识](https://github.com/user-attachments/assets/9b907494-d91f-4866-8168-671ef33a1c47)  
+![气球标识](https://github.com/user-attachments/assets/7b3a9489-7394-43fc-9d44-142d86b2f106)  
 
 飞行数据仪表板: [hab.satellites.ac.cn](https://hab.satellites.ac.cn/)  
 
@@ -15,19 +15,19 @@
 
 - **实时遥测与追踪**：通过地面站实时接收、解析并展示气球的 GPS 位置、高度、速度、航向等关键遥测数据  
 - **图像拍摄与回传**：支持将机载摄像头拍摄的图像通过 SSDV 协议进行编码和下传，并在地面站实时解码显示  
-- **业余无线电通信**：集成数字中继功能，允许业余无线电爱好者通过气球作为中继进行远距离的通信实验  
+- **业余无线电通信**：集成数字中继功能，允许业余无线电爱好者通过气球作为数字中继进行远距离的通信实验  
 - **Web 数据仪表板**：提供一个集成的 Web 仪表板，整合了 SondeHub 实时追踪、飞行轨迹预测和 Grafana 遥测数据可视化图表  
 
 ## 📸 系统展示  
 
 - **🎈 气球载荷**  
-![Balloon_PCB_仿真](https://github.com/user-attachments/assets/6cf40003-a2eb-4a73-ad00-6bc74763e5cb)  
+![Balloon_PCB_仿真](https://github.com/user-attachments/assets/ba6ab02a-0ec4-4297-9382-652cf812d755)  
 
 - **⚙️ 可配置数传单元**  
-![CDUT_装配](https://github.com/user-attachments/assets/4bbb6355-5fce-4335-87c8-cc5862c12ad8)  
+![CDUT_装配](https://github.com/user-attachments/assets/670276f7-631c-4c8d-99bc-0450763e11d5)
 
 - **📡 地面站程序**  
-![Ground_Station_程序](https://github.com/user-attachments/assets/9cbba862-a3c9-411c-9c03-f91c888d31e1)  
+![Ground_Station](https://github.com/user-attachments/assets/c483e5b9-bf6e-4d8e-be6a-f7b921d360d1)
 
 ## 🛠️ 系统架构  
 整个项目由三个主要部分组成：  
@@ -46,9 +46,9 @@
 
 - `/main.py`: 运行在 RP2040-Zero 上的核心程序。它将普通的 HC-12 数传模块升级为一个智能可配置的数传单元，实现了：  
   - 简易功能配置：免去了对硬件进行直接操作，智能识别解析配置指令，动态调整模块的参数  
-  - 自适应波特率：存储了模块的配置参数，解决了串口通信的波特率管理问题  
-  - 透明数据桥接：在默认模式下作为完全透明的数据传输桥  
+  - 自适应波特率：存储了模块的配置参数，解决了串口通信的波特率管理问题    
   - 自动模式切换：通过硬件引脚控制模块在数据模式和命令模式间无缝切换  
+  - 透明数据桥接：在默认模式下作为完全透明的数据传输桥  
 
 - `CDUT_PCB_Ver_0.0.1.epro`: CDUT 的电路设计，使用立创 EDA 绘制  
 
