@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 """
 GUI program for Balloon Ground Station.
 
@@ -8,7 +10,7 @@ providing a comprehensive ground monitoring and data visualization solution for 
 
 Author: BG7ZDQ
 Date: 2025/06/12
-Version: 0.0.2
+Version: 0.1.0
 LICENSE: GNU General Public License v3.0
 """
 
@@ -19,33 +21,44 @@ import serial
 import subprocess
 import numpy as np
 from serial.tools import list_ports
+from datetime import datetime, timezone
 from configparser import RawConfigParser
 from PyQt6.QtGui import QIcon, QPixmap, QColor
-from datetime import datetime, timedelta, timezone
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import Qt, QUrl, QTimer, QTime, QThread, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QPlainTextEdit, QMessageBox, QComboBox, QLineEdit, QFormLayout, QHeaderView, QTableWidget, QVBoxLayout, QTableWidgetItem, QAbstractItemView, QDialog
+from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QPlainTextEdit, QMessageBox, QComboBox, QLineEdit, QFormLayout, QHeaderView, QTableWidget, QVBoxLayout, QTableWidgetItem, QAbstractItemView, QDialog, QTabWidget, QHBoxLayout
 
 # 禁用 GPU 加速
 os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu --disable-software-rasterizer'
 
-# 组件样式
-tip_style = 'color: #3063AB; font-family: 微软雅黑; font: 10pt;'
-common_style = 'color: #555555; font-family: 微软雅黑; font: bold 12pt;'
-grid_style = 'color: #3063AB; font-family: 微软雅黑; font: bold 12pt; border: none;'
-title_style = 'color: #3063AB; font-family: 微软雅黑; font: bold 12pt; border: none;'
+# 全局组件样式
+tip_text_style = 'color: #3063AB; font-family: 微软雅黑; font: 10pt; border: none;'
 callsign_style = 'color: #3063AB; font-family: 微软雅黑; font: bold 16pt; border: none;'
-Common_button_style = 'QPushButton {background-color: #3498db; color: #ffffff; border-radius: 5px; padding: 6px; font-size: 12px;} QPushButton:hover {background-color: #2980b9;} QPushButton:pressed {background-color: #21618c;}'
-TextEdit_style = 'QPlainTextEdit {background-color: #FFFFFF; color: #3063AB; border: 1px solid #3498db; border-radius: 5px; padding: 1px; font-family: 微软雅黑; font-size: 12px;}'
-ComboBox_style = 'QComboBox {background-color: #ffffff; border: 1px solid #3498db; border-radius: 3px; padding: 2px; min-width: 6em; font: bold 10pt "微软雅黑"; color: #3063AB;} QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 20px; border-left: 1px solid #3498db;}QComboBox::down-arrow { image: url(UI/arrow.svg); width: 10px; height: 10px;} QComboBox QAbstractItemView { background: #ffffff; selection-background-color: #89CFF0; selection-color: #000000; border: 1px solid #3498db; outline: 0; font: 10pt "微软雅黑";}'
-LineEdit_style = 'QLineEdit { background-color: #FFFFFF; color: #3063AB; border: 1px solid #3498db; border-radius: 5px; padding: 1px; font-family: 微软雅黑; font-size: 12px; }'
-frame_style = 'border: 1px solid #AAAAAA; border-radius: 4px;;'
+primary_text_style = 'color: #3063AB; font-family: 微软雅黑; font: bold 12pt; border: none;'
+secondary_text_style = 'color: #555555; font-family: 微软雅黑; font: bold 12pt; border: none;'
+
+qso_frame_style = 'border: 1px solid #AAAAAA; border-radius: 4px;'
+debug_box_style = 'QPlainTextEdit { background-color: #FFFFFF; color: #3063AB; border: 1px solid #3498db; border-radius: 5px; padding: 1px; font-family: 微软雅黑; font-size: 12px;}'
+combo_box_style = 'QComboBox { background-color: #ffffff; border: 1px solid #3498db; border-radius: 3px; padding: 2px; min-width: 6em; font: bold 10pt "微软雅黑"; color: #3063AB;} QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 20px; border-left: 1px solid #3498db;}QComboBox::down-arrow { image: url(UI/arrow.svg); width: 10px; height: 10px;} QComboBox QAbstractItemView { background: #ffffff; selection-background-color: #89CFF0; selection-color: #000000; border: 1px solid #3498db; outline: 0; font: 10pt "微软雅黑";}'
+input_box_style = 'QLineEdit { background-color: #FFFFFF; color: #3063AB; border: 1px solid #3498db; border-radius: 5px; padding: 1px; font-family: 微软雅黑; font-size: 12px; } QPlainTextEdit { background-color: #FFFFFF; color: #3063AB; border: 1px solid #3498db; border-radius: 5px; padding: 1px; font-family: 微软雅黑; font-size: 12px; } QLineEdit:disabled {background-color: #F0F0F0; color: #000000; border: 1px solid #888888;}'
+common_button_style = 'QPushButton { background-color: #3498db; color: #ffffff; border-radius: 5px; padding: 6px; font-size: 12px;} QPushButton:hover {background-color: #2980b9;} QPushButton:pressed {background-color: #21618c;}'
 
 # 处理配置文件
 config = RawConfigParser()
 config.optionxform = str
 config.read("config.ini")
-quitting_for_restart = False
+
+# 检查配置文件是否存在且包含必要信息
+def is_config_valid():
+    try:
+        config.read('config.ini')
+        config.get("GroundStation", "Callsign")
+        config.getfloat("GroundStation", "Latitude")
+        config.getfloat("GroundStation", "Longitude")
+        config.getfloat("GroundStation", "Altitude")
+        return True
+    except Exception:
+        return False
 
 # 程序主窗口
 class GUI(QWidget):
@@ -65,9 +78,10 @@ class GUI(QWidget):
         self.setWindowTitle('气球地面站：The Ground Station Software of HAB')
         self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
 
-        # 窗口状态
+        # 线程占位符
         self.SET_window = None
         self.QSO_window = None
+        self.decoder_thread = None
         self.Command_window = None
         self.Radio_Serial_Thread = None
 
@@ -79,38 +93,159 @@ class GUI(QWidget):
 
         # 旋转器信息
         self.Rotator_AZ = 00.00
-        self.Rotator_EL = 90.00
+        self.Rotator_EL = 00.00
 
         # 图像编号
         self.filename  = ''
         self.img_num   = -1
         self.frame_num = 1
 
-        # 设置主程序图标
-        global waiting, correct, warning, error, data, hourglass, camera, img, geo
-        waiting = QPixmap('UI/waiting.svg')
-        correct = QPixmap('UI/correct.svg')
+        # 设置可复用的状态图标
+        global standby, success, warning, failure, pending
+        standby = QPixmap('UI/standby.svg')
+        success = QPixmap('UI/success.svg')
         warning = QPixmap('UI/warning.svg')
-        error = QPixmap('UI/error.svg')
-        data = QPixmap('UI/data.svg')
-        hourglass = QPixmap('UI/hourglass.svg')
-        camera = QPixmap('UI/camera.svg')
-        img = QPixmap('UI/image.svg')
-        geo = QPixmap('UI/geo.svg')
+        failure = QPixmap('UI/failure.svg')
+        pending = QPixmap('UI/pending.svg')
 
-        # 数据缓存
-        self.buffer = bytearray()
+        # 状态码翻译与处理字典
+        self.status_code_map = {
+            # --- 系统级状态码 (0x10xx) ---
+            0x1000: ("[正常] 正在启动..."  , "init", pending),
+            0x1001: ("[正常] 系统初始化完成", "init", success),
+            0x1002: ("[错误] 系统初始化失败", "init", failure),
+            0x1003: ("[注意] 系统将受控重启", "init", warning),
+            0x1004: ("[注意] 处于开发者模式",  None , None),
+            0x1005: ("[警告] 中继功能已限流", "data", warning),
 
-        # 最后获取地面站信息
-        try:
+            # --- 摄像头状态码 (0x20xx) ---
+            0x2000: ("[正常] 相机初始化开始", "camera", pending),
+            0x2001: ("[正常] 相机初始化成功", "camera", success),
+            0x2002: ("[错误] 相机初始化失败", "camera", failure),
+            0x2003: ("[正常] 相机开始校准"  , "camera", pending),
+            0x2004: ("[正常] 相机校准成功"  , "camera", success),
+            0x2005: ("[错误] 相机校准失败"  , "camera", failure),
+            0x2006: ("[警告] 图像拍摄失败"  , "camera", failure),
+            0x2007: ("[正常] 相机配置成功"  , "camera", success),
+            0x2008: ("[警告] 相机配置失败"  , "camera", failure),
+            0x2009: ("[注意] 相机参数重置"  , "camera", success),
+            0x200A: ("[错误] 相机重置失败"  , "camera", failure),
+            
+            # --- GPS 状态码 (0x30xx) ---
+            0x3000: ("[正常] GPS 初始化开始", "gps", pending),
+            0x3001: ("[正常] GPS 初始化成功", "gps", success),
+            0x3002: ("[错误] GPS 初始化超时", "gps", failure),
+
+            # --- SSDV 状态码 (0x40xx) ---
+            0x4000: ("[正常] 图像编码开始", "data", pending),
+            0x4001: ("[正常] 图像发送完毕", "data", success),
+            0x4002: ("[错误] 图像编码错误", "data", failure),
+            0x4003: ("[警告] 图像缓冲区满", "data", warning),
+
+            # --- 指令应答 (0x50xx, 0x51xx) ---
+            # NACK
+            0x5001: ("[拒绝] 指令格式错误", None, None),
+            0x5002: ("[拒绝] 指令缺少参数", None, None),
+            0x5003: ("[拒绝] 指令类型无效", None, None),
+            0x5004: ("[拒绝] 查询目标无效", None, None),
+            0x5005: ("[拒绝] 控制目标无效", None, None),
+            0x5006: ("[拒绝] 设置目标无效", None, None),
+            0x5007: ("[拒绝] 图传任务正忙", None, None),
+            0x5008: ("[拒绝] 图像质量无效", None, None),
+            0x5009: ("[拒绝] 图像质量过高", None, None),
+            0x500A: ("[拒绝] 编码质量无效", None, None),
+            0x500B: ("[拒绝] 图传周期无效", None, None),
+            # CTL ACK
+            0x500C: ("[应答] 中继功能已开启", None, None),
+            0x500D: ("[应答] 中继功能已关闭", None, None),
+            0x500E: ("[应答] 图传功能已开启", None, None),
+            0x500F: ("[应答] 图传功能已关闭", None, None),
+            # SET ACK
+            0x5010: ("[应答] 图传模式已设置", None, None),
+            0x5011: ("[应答] 图传质量已设置", None, None),
+            0x5012: ("[应答] 图传周期已设置", None, None),
+            0x5013: ("[应答] 图像尺寸已设置", None, None),
+            0x5014: ("[应答] 图像质量已设置", None, None),
+            # GET ACK
+            0x5100: ("[查询] 中继状态", None, None),
+            0x5101: ("[查询] 图传状态", None, None),
+            0x5102: ("[查询] 图传模式", None, None),
+            0x5103: ("[查询] 图传质量", None, None),
+            0x5104: ("[查询] 图传周期", None, None),
+            0x5105: ("[查询] 图像尺寸", None, None),
+            0x5106: ("[查询] 图像质量", None, None),
+            
+            # --- 传感器状态码 (0x60xx) ---
+            0x6000: ("[错误] 电压采样失败", "data", failure),
+        }
+
+        # 翻译枚举定义
+        self.CAM_SIZE_MAP = {
+            "14": "FHD (1920x1080)",
+            "12": "SXGA (1280x1024)",
+            "9": "SVGA (800x480)",
+            "8": "VGA (640x480)",
+            "5":  "QVGA (320x240)",
+        }
+        self.SSDV_TYPE_MAP = {
+            "0": "FEC",
+            "1": "NOFEC",
+        }
+        self.ESP_ERR_MAP = {
+            "0":     "OK",
+            "1":     "FAIL",
+            "257":   "ERR_NO_MEM",
+            "258":   "ERR_INVALID_ARG",
+            "259":   "ERR_INVALID_STATE",
+            "260":   "ERR_INVALID_SIZE",
+            "261":   "ERR_NOT_FOUND",
+            "262":   "ERR_NOT_SUPPORTED",
+            "263":   "ERR_TIMEOUT",
+            # --- 摄像头相关错误码 (基于 0x20000) ---
+            "131073": "ERR_CAMERA_NOT_DETECTED",
+            "131074": "ERR_CAMERA_FAILED_TO_SET_FRAME_SIZE",
+            "131075": "ERR_CAMERA_FAILED_TO_INIT",
+            "131076": "ERR_CAMERA_FAILED_TO_GET_FB",
+            # --- ADC 相关错误码 ---
+            "1": "ADC_SAMPLE_FAIL (ADC采样连续失败)", # 您在 status_codes.h 中定义的，可以复用ESP_FAIL
+        }
+
+        # 串口数据缓存区 (接收) 
+        self.rx_buffer = bytearray()
+
+        # 绘制UI
+        self.UI()
+
+        # 然后检查配置
+        if not is_config_valid():
+            # 配置无效，弹出设置窗口让用户设置
+            QMessageBox.information(self, "欢迎", "首次运行，请先设置地面站信息。")
+            
+            # 打开设置窗口
+            self.SET_window = SET_Windows("", 0.0, 0.0, 0.0)
+            self.SET_window.settings_saved.connect(self.update_ground_station_settings)
+            
+            # 以模态方式执行对话框
+            result = self.SET_window.exec()
+
+            # 检查用户是否完成了保存
+            if result == QDialog.DialogCode.Accepted:
+                config.read('config.ini')
+                self.callsign = config.get("GroundStation", "Callsign")
+                self.local_lat = config.getfloat("GroundStation", "Latitude")
+                self.local_lng = config.getfloat("GroundStation", "Longitude")
+                self.local_alt = config.getfloat("GroundStation", "Altitude")
+                self.debug_info("首次设置成功。")
+            else:
+                QMessageBox.warning(self, "提示", "未完成基本设置，程序将退出。")
+                sys.exit(1)
+                return
+        else:
+            # 配置有效，加载信息
             self.callsign = config.get("GroundStation", "Callsign")
             self.local_lat = config.getfloat("GroundStation", "Latitude")
             self.local_lng = config.getfloat("GroundStation", "Longitude")
             self.local_alt = config.getfloat("GroundStation", "Altitude")
-            self.UI()
-        except Exception as e:
-            QMessageBox.warning(self, "提示", f"请重设地面站信息")
-            self.SET()
 
     # 主窗口
     def UI(self):
@@ -118,53 +253,53 @@ class GUI(QWidget):
         '''左栏'''
         # 接收机端口选择部分
         self.Radio_COM_status = QLabel(self)
-        self.Radio_COM_status.setPixmap(waiting)
+        self.Radio_COM_status.setPixmap(standby)
         self.Radio_COM_status.move(40, 28)
 
         self.Receiver_COM_label = QLabel(self)
         self.Receiver_COM_label.setText("接收机端口：")
         self.Receiver_COM_label.move(65, 25)
-        self.Receiver_COM_label.setStyleSheet(title_style)
+        self.Receiver_COM_label.setStyleSheet(primary_text_style)
 
         self.Radio_COM_Combo = QComboBox(self)
         self.Radio_COM_Combo.addItems([])
         self.Radio_COM_Combo.setGeometry(165, 21, 120, 30)
-        self.Radio_COM_Combo.setStyleSheet(ComboBox_style)
+        self.Radio_COM_Combo.setStyleSheet(combo_box_style)
 
         self.Radio_COM_button = QPushButton("连接", self)
         self.Radio_COM_button.setGeometry(300, 21, 50, 27)
-        self.Radio_COM_button.setStyleSheet(Common_button_style)
+        self.Radio_COM_button.setStyleSheet(common_button_style)
         self.Radio_COM_button.clicked.connect(self.Connect_Radio_COM)
 
         # 旋转器端口选择部分
         self.Rotator_COM_status = QLabel(self)
-        self.Rotator_COM_status.setPixmap(waiting)
+        self.Rotator_COM_status.setPixmap(standby)
         self.Rotator_COM_status.move(40, 63)
 
         self.Rotator_COM_label = QLabel(self)
         self.Rotator_COM_label.setText("旋转器端口：")
         self.Rotator_COM_label.move(65, 60)
-        self.Rotator_COM_label.setStyleSheet(title_style)
+        self.Rotator_COM_label.setStyleSheet(primary_text_style)
 
         self.Rotator_COM_Combo = QComboBox(self)
         self.Rotator_COM_Combo.addItems([])
         self.Rotator_COM_Combo.setGeometry(165, 56, 120, 30)
-        self.Rotator_COM_Combo.setStyleSheet(ComboBox_style)
+        self.Rotator_COM_Combo.setStyleSheet(combo_box_style)
 
         self.Rotator_COM_button = QPushButton("连接", self)
         self.Rotator_COM_button.setGeometry(300, 56, 50, 27)
-        self.Rotator_COM_button.setStyleSheet(Common_button_style)
+        self.Rotator_COM_button.setStyleSheet(common_button_style)
         self.Rotator_COM_button.clicked.connect(self.Connect_Rotator_COM)
 
         # GPS 数据
         self.GPS_status = QLabel(self)
-        self.GPS_status.setPixmap(geo)
+        self.GPS_status.setPixmap(QPixmap('UI/geo.svg'))
         self.GPS_status.move(40, 103)
 
         self.GPS_label = QLabel(self)
         self.GPS_label.setText("GPS 数据：尚无")
         self.GPS_label.move(65, 100)
-        self.GPS_label.setStyleSheet(title_style)
+        self.GPS_label.setStyleSheet(primary_text_style)
 
         # 轨迹地图嵌入
         self.map_view = QWebEngineView(self)
@@ -174,145 +309,150 @@ class GUI(QWidget):
         self.GPS_LAT_label = QLabel(self)
         self.GPS_LAT_label.setText("经度: ")
         self.GPS_LAT_label.move(40, 390)
-        self.GPS_LAT_label.setStyleSheet(title_style)
+        self.GPS_LAT_label.setStyleSheet(primary_text_style)
 
         self.GPS_LAT_NUM = QLabel(self)
         self.GPS_LAT_NUM.setText("")
         self.GPS_LAT_NUM.move(85, 390)
-        self.GPS_LAT_NUM.setStyleSheet(title_style)
+        self.GPS_LAT_NUM.setStyleSheet(primary_text_style)
 
         self.GPS_LON_label = QLabel(self)
         self.GPS_LON_label.setText("纬度：")
         self.GPS_LON_label.move(200, 390)
-        self.GPS_LON_label.setStyleSheet(title_style)
+        self.GPS_LON_label.setStyleSheet(primary_text_style)
 
         self.GPS_LON_NUM = QLabel(self)
         self.GPS_LON_NUM.setText("")
         self.GPS_LON_NUM.move(245, 390)
-        self.GPS_LON_NUM.setStyleSheet(title_style)
+        self.GPS_LON_NUM.setStyleSheet(primary_text_style)
 
         self.GPS_ALT_label = QLabel(self)
         self.GPS_ALT_label.setText("高度：")
         self.GPS_ALT_label.move(40, 415)
-        self.GPS_ALT_label.setStyleSheet(title_style)
+        self.GPS_ALT_label.setStyleSheet(primary_text_style)
 
         self.GPS_ALT_NUM = QLabel(self)
         self.GPS_ALT_NUM.setText("")
         self.GPS_ALT_NUM.move(85, 415)
-        self.GPS_ALT_NUM.setStyleSheet(title_style)
+        self.GPS_ALT_NUM.setStyleSheet(primary_text_style)
 
         self.GPS_SPD_label = QLabel(self)
         self.GPS_SPD_label.setText("速度：")
         self.GPS_SPD_label.move(200, 415)
-        self.GPS_SPD_label.setStyleSheet(title_style)
+        self.GPS_SPD_label.setStyleSheet(primary_text_style)
 
         self.GPS_SPD_NUM = QLabel(self)
         self.GPS_SPD_NUM.setText("")
         self.GPS_SPD_NUM.move(245, 415)
-        self.GPS_SPD_NUM.setStyleSheet(title_style)
+        self.GPS_SPD_NUM.setStyleSheet(primary_text_style)
 
         self.GPS_SATS_label = QLabel(self)
         self.GPS_SATS_label.setText("卫星数: ")
         self.GPS_SATS_label.move(200, 440)
-        self.GPS_SATS_label.setStyleSheet(title_style)
+        self.GPS_SATS_label.setStyleSheet(primary_text_style)
 
         self.GPS_SATS_NUM = QLabel(self)
         self.GPS_SATS_NUM.setText("")
         self.GPS_SATS_NUM.move(260, 440)
-        self.GPS_SATS_NUM.setStyleSheet(title_style)
+        self.GPS_SATS_NUM.setStyleSheet(primary_text_style)
 
         self.GPS_heading_label = QLabel(self)
         self.GPS_heading_label.setText("航向角: ")
         self.GPS_heading_label.move(40, 440)
-        self.GPS_heading_label.setStyleSheet(title_style)
+        self.GPS_heading_label.setStyleSheet(primary_text_style)
 
         self.GPS_heading_NUM = QLabel(self)
         self.GPS_heading_NUM.setText("")
         self.GPS_heading_NUM.move(100, 440)
-        self.GPS_heading_NUM.setStyleSheet(title_style)
+        self.GPS_heading_NUM.setStyleSheet(primary_text_style)
 
         self.rotator_az_label = QLabel(self)
         self.rotator_az_label.setText("方位角：")
         self.rotator_az_label.move(40, 465)
-        self.rotator_az_label.setStyleSheet(title_style)
+        self.rotator_az_label.setStyleSheet(primary_text_style)
 
         self.rotator_az_NUM = QLabel(self)
         self.rotator_az_NUM.setText("")
         self.rotator_az_NUM.move(100, 465)
-        self.rotator_az_NUM.setStyleSheet(title_style)
+        self.rotator_az_NUM.setStyleSheet(primary_text_style)
 
         self.rotator_el_label = QLabel(self)
         self.rotator_el_label.setText("俯仰角：")
         self.rotator_el_label.move(200, 465)
-        self.rotator_el_label.setStyleSheet(title_style)
+        self.rotator_el_label.setStyleSheet(primary_text_style)
 
         self.rotator_el_NUM = QLabel(self)
         self.rotator_el_NUM.setText("")
         self.rotator_el_NUM.move(260, 465)
-        self.rotator_el_NUM.setStyleSheet(title_style)
+        self.rotator_el_NUM.setStyleSheet(primary_text_style)
         
         '''右栏'''
         # 系统状态指示
         self.Data_status_label = QLabel(self)
         self.Data_status_label.setText("数传:")
         self.Data_status_label.move(420, 25)
-        self.Data_status_label.setStyleSheet(title_style)
+        self.Data_status_label.setStyleSheet(primary_text_style)
 
         self.Data_status_icon = QLabel(self)
-        self.Data_status_icon.setPixmap(waiting)
+        self.Data_status_icon.setPixmap(standby)
         self.Data_status_icon.move(465, 28)
 
         self.Camera_status_label = QLabel(self)
         self.Camera_status_label.setText("相机:")
         self.Camera_status_label.move(500, 25)
-        self.Camera_status_label.setStyleSheet(title_style)
+        self.Camera_status_label.setStyleSheet(primary_text_style)
 
         self.Camera_status_icon = QLabel(self)
-        self.Camera_status_icon.setPixmap(waiting)
+        self.Camera_status_icon.setPixmap(standby)
         self.Camera_status_icon.move(545, 28)
 
         self.GPS_status_label = QLabel(self)
         self.GPS_status_label.setText("定位:")
         self.GPS_status_label.move(580, 25)
-        self.GPS_status_label.setStyleSheet(title_style)
+        self.GPS_status_label.setStyleSheet(primary_text_style)
 
         self.GPS_status_icon = QLabel(self)
-        self.GPS_status_icon.setPixmap(waiting)
+        self.GPS_status_icon.setPixmap(standby)
         self.GPS_status_icon.move(625, 28)
 
         self.init_status_label = QLabel(self)
         self.init_status_label.setText("自检:")
         self.init_status_label.move(660, 25)
-        self.init_status_label.setStyleSheet(title_style)
+        self.init_status_label.setStyleSheet(primary_text_style)
 
         self.init_status_icon = QLabel(self)
-        self.init_status_icon.setPixmap(waiting)
+        self.init_status_icon.setPixmap(standby)
         self.init_status_icon.move(705, 28)
 
         # 帧类型指示器
         self.Frame_type_icon = QLabel(self)
-        self.Frame_type_icon.setPixmap(data)
+        self.Frame_type_icon.setPixmap(QPixmap('UI/data.svg'))
         self.Frame_type_icon.move(420, 63)
 
         self.Frame_type_label = QLabel(self)
         self.Frame_type_label.setText("当前帧类型：")
         self.Frame_type_label.move(445, 60)
-        self.Frame_type_label.setStyleSheet(title_style)
+        self.Frame_type_label.setStyleSheet(primary_text_style)
 
         self.Frame_type_output = QLabel(self)
         self.Frame_type_output.setText("暂无有效帧")
         self.Frame_type_output.move(545, 60)
-        self.Frame_type_output.setStyleSheet(common_style)
+        self.Frame_type_output.setStyleSheet(secondary_text_style)
     
         # 图片接收
         self.SSDV_icon = QLabel(self)
-        self.SSDV_icon.setPixmap(img)
+        self.SSDV_icon.setPixmap(QPixmap('UI/image.svg'))
         self.SSDV_icon.move(420, 103)
 
         self.SSDV_label = QLabel(self)
         self.SSDV_label.setText("图像回传：")
         self.SSDV_label.move(445, 100)
-        self.SSDV_label.setStyleSheet(title_style)
+        self.SSDV_label.setStyleSheet(primary_text_style)
+
+        self.SSDV_name_output = QLabel(self)
+        self.SSDV_name_output.setText("尚无有效图像")
+        self.SSDV_name_output.move(525, 100)
+        self.SSDV_name_output.setStyleSheet(primary_text_style)
 
         # SSDV 接收框
         self.SSDV_IMG = QLabel(self)
@@ -323,27 +463,27 @@ class GUI(QWidget):
         self.DEBUG_INFO_label = QLabel(self)
         self.DEBUG_INFO_label.setText("调试信息：")
         self.DEBUG_INFO_label.move(420, 390)
-        self.DEBUG_INFO_label.setStyleSheet(title_style)
+        self.DEBUG_INFO_label.setStyleSheet(primary_text_style)
 
         self.SET_button = QPushButton("设置", self)
         self.SET_button.setGeometry(500, 387, 50, 27)
-        self.SET_button.setStyleSheet(Common_button_style)
+        self.SET_button.setStyleSheet(common_button_style)
         self.SET_button.clicked.connect(self.SET)
 
         self.QSO_button = QPushButton("通信", self)
         self.QSO_button.setGeometry(560, 387, 50, 27)
-        self.QSO_button.setStyleSheet(Common_button_style)
+        self.QSO_button.setStyleSheet(common_button_style)
         self.QSO_button.clicked.connect(self.QSO)
 
-        self.QSO_button = QPushButton("命令", self)
-        self.QSO_button.setGeometry(620, 387, 50, 27)
-        self.QSO_button.setStyleSheet(Common_button_style)
-        self.QSO_button.clicked.connect(self.Command)
+        self.Command_button = QPushButton("命令", self)
+        self.Command_button.setGeometry(620, 387, 50, 27)
+        self.Command_button.setStyleSheet(common_button_style)
+        self.Command_button.clicked.connect(self.Command)
 
         self.DEBUG_output = QPlainTextEdit(self)
         self.DEBUG_output.setReadOnly(True)
         self.DEBUG_output.setGeometry(420, 420, 330, 65)
-        self.DEBUG_output.setStyleSheet(TextEdit_style)
+        self.DEBUG_output.setStyleSheet(debug_box_style)
 
         # 串口刷新定时器
         self.Update_COM_Info()
@@ -359,41 +499,92 @@ class GUI(QWidget):
 
     # 处理收发信机的串口数据
     def Handle_Radio_Serial_Data(self, data: bytes):
-        self.buffer.extend(data)
+        self.rx_buffer.extend(data)
 
+        # 只要缓冲区内容在一次完整的处理循环中发生了变化，就持续循环
         while True:
-            # 优先尝试提取文本
+            buffer_changed_this_cycle = False
+
+            # 先检测清理所有前导噪声
+            if self.discard_leading_garbage():
+                buffer_changed_this_cycle = True
+
+            # 然后循环提取所有完整的 SSDV 帧
+            while self.try_extract_ssdv():
+                buffer_changed_this_cycle = True
+
+            # 循环提取所有完整的文本帧
             if self.Try_Extract_Text():
-                continue
-            # 然后提取 SSDV
-            if self.try_extract_ssdv():
-                continue
-            break
+                buffer_changed_this_cycle = True
+            
+            # 如果经过一整轮的清理、SSDV提取、文本提取后，缓冲区没有任何变化，
+            # 说明剩下的都是不完整的数据帧，应该跳出循环，等待更多新数据进来。
+            if not buffer_changed_this_cycle:
+                break
+    
+    # 清除缓冲区的噪声数据
+    def discard_leading_garbage(self) -> bool:
+        
+        # 定义所有已知有效数据包的头部
+        known_headers = [
+            b"\x55\x67",  # SSDV NOFEC 模式
+            b"\x55\x66",  # SSDV 正常模式
+            b"**"         # 文本模式
+        ]
+
+        # 如果缓冲区为空，则无需操作
+        if not self.rx_buffer:
+            return False
+
+        # 寻找第一个出现的有效包头的位置
+        first_valid_pos = -1
+        for header in known_headers:
+            pos = self.rx_buffer.find(header)
+            if pos != -1:
+                if first_valid_pos == -1 or pos < first_valid_pos:
+                    first_valid_pos = pos
+        
+        # 情况一：缓冲区中存在至少一个有效包头
+        if first_valid_pos != -1:
+            if first_valid_pos > 0:
+                # self.debug_info(f"检测并丢弃 {first_valid_pos} 字节的无效数据。")
+                self.rx_buffer = self.rx_buffer[first_valid_pos:]
+                return True
+            else:
+                return False
+
+        # 情况二：缓冲区超长但找不到任何有效的包头时，清空缓冲区
+        else:
+            if len(self.rx_buffer) > 512:
+                self.debug_info(f"已清空 {len(self.rx_buffer)} 字节噪声。")
+                self.rx_buffer.clear()
+                return True
+            return False
 
     # 使用正则表达式提取文本帧信息
     def Try_Extract_Text(self) -> bool:
-        current_buffer_bytes = bytes(self.buffer)
-        changed = False
-
-        # 找出所有完整的文本帧
-        for match in re.finditer(rb"\*\*(.+?)\*\*", current_buffer_bytes, re.DOTALL):
+        current_buffer_str = bytes(self.rx_buffer)
+        original_len = len(current_buffer_str)
+        
+        # 使用 re.sub 来替换所有文本帧匹配项
+        def process_and_remove(match):
             Text_raw = match.group(0)
-
             try:
                 Text_text = Text_raw.decode("utf-8", errors="strict").strip("* ").strip()
+                # 数传状态正常，将文本数据发送到处理函数
+                self.Data_status_icon.setPixmap(success)
+                self.Processing_Text_Data(Text_text)
             except UnicodeDecodeError:
                 print(f"[警告] 文本解码失败: {Text_raw}")
-                continue
             
-            # 数传状态正常，将文本数据发送到处理函数
-            self.Data_status_icon.setPixmap(correct)
-            self.Processing_Text_Data(Text_text)
-            changed = True
+            # 返回空字节串，相当于从原字符串中删除此匹配项
+            return b""
 
-        # 如果有匹配，清除 buffer 直到最后一个匹配结束位置
-        if changed:
-            last_match = list(re.finditer(rb"\*\*(.+?)\*\*", current_buffer_bytes, re.DOTALL))[-1]
-            self.buffer = self.buffer[last_match.end():]
+        # 查找所有匹配项，并用 process_and_remove 函数的返回值替换
+        modified_buffer_str = re.sub(rb"\*\*(.+?)\*\*", process_and_remove, current_buffer_str)
+
+        if len(modified_buffer_str) < original_len:
+            self.rx_buffer = bytearray(modified_buffer_str)
             return True
         else:
             return False
@@ -404,77 +595,107 @@ class GUI(QWidget):
         # 记录日志
         print(f"文本帧：{text}")
         time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open("log.txt", "a") as f:
-            f.write(f"{time}    {text}\n")
+        with open("log.txt", "a", encoding="utf-8") as f:
+            f.write(f"{time}    « {text}\n")
 
         # 处理 $$ 开头的遥测数据
         # $$CALLSIGN,Frame_Counter,HH:MM:SS,latitude,longitude,altitude,speed,sats,heading
         if text.startswith("$$"):
-            self.Frame_type_output.setText(f"GPS 数据遥测帧")
-            self.Frame_type_output.adjustSize()
             try:
-                fields = text[2:].split(",")
-                if len(fields) >= 10:
-                    self.balloon_time = fields[2]
-                    new_balloon_lat = float(fields[3])
-                    new_balloon_lng = float(fields[4])
-                    new_balloon_alt = float(fields[5])
-                    self.balloon_spd = float(fields[6])
-                    self.balloon_sats = int(fields[7])
-                    self.balloon_heading = float(fields[8])
-                    self.balloon_temprature = float(fields[9])
-                    
-                    # 控制旋转器
-                    self.Rotator_AZ, self.Rotator_EL = self.calculate_az_el(new_balloon_lat, new_balloon_lng, new_balloon_alt)
-
-                    # 更新数值
-                    self.balloon_lat = new_balloon_lat
-                    self.balloon_lng = new_balloon_lng
-                    self.balloon_alt = new_balloon_alt
-                    
-                    # 更新地图
-                    self.update_map_position()
-                    self.debug_info(f"GPS 数据已更新")
-
-                    # 更新标签显示
-                    self.GPS_status_icon.setPixmap(correct)
-                    self.GPS_label.setText(f"GPS 数据：就绪")
-                    self.GPS_label.adjustSize()
-                    self.GPS_LAT_NUM.setText(f"{self.balloon_lat:.6f}")
-                    self.GPS_LAT_NUM.adjustSize()
-                    self.GPS_LON_NUM.setText(f"{self.balloon_lng:.6f}")
-                    self.GPS_LON_NUM.adjustSize()
-                    self.GPS_ALT_NUM.setText(f"{self.balloon_alt:.2f} m")
-                    self.GPS_ALT_NUM.adjustSize()
-                    self.GPS_SPD_NUM.setText(f"{self.balloon_spd:.2f} m/s")
-                    self.GPS_SPD_NUM.adjustSize()
-                    self.GPS_SATS_NUM.setText(f"{self.balloon_sats}")
-                    self.GPS_SATS_NUM.adjustSize()
-                    self.GPS_heading_NUM.setText(f"{self.balloon_heading:.2f}")
-                    self.GPS_heading_NUM.adjustSize()
-                    self.rotator_az_NUM.setText(f"{self.Rotator_AZ:.2f}")
-                    self.rotator_az_NUM.adjustSize()
-                    self.rotator_el_NUM.setText(f"{self.Rotator_EL:.2f}")
-                    self.rotator_el_NUM.adjustSize()
-
-                    # 获取现在的时间并将其格式化
-                    now_utc = datetime.now(timezone.utc)
-                    adjusted_time = now_utc + timedelta(seconds=30)
-                    formatted = adjusted_time.strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
-
-                    # 调用 SondeHub API接口
-                    # sondehub.exe <上传者呼号> <接收时间> <球上时间> <球上温度> <经度> <纬度> <高度> <航向角> <GPS卫星数> <地面站经度> <地面站纬度> <地面站高度>
-                    try:
-                        subprocess.Popen(["./sondehub", f"{self.callsign}", f"{formatted}", f"{self.balloon_time}", f"{self.balloon_temprature}", f"{self.balloon_lng}", f"{self.balloon_lat}", f"{self.balloon_alt}", f"{self.balloon_heading}", f"{self.balloon_sats}", f"{self.local_lng}", f"{self.local_lat}", f"{self.local_alt}"])
-                    except Exception as e:
-                        self.debug_info(f"SondeHub上传失败: {e}")
-                        return False
-                    return
-
+                fields = text[2:].strip().split(",")
+                if len(fields) == 12:
+                    balloon_callsign = fields[0]                # 气球呼号
+                    telemetry_counter = fields[1]               # 帧计数
+                    self.balloon_time = fields[2]               # 球上时间
+                    new_balloon_lat = float(fields[3])          # 气球纬度
+                    new_balloon_lng = float(fields[4])          # 气球经度
+                    new_balloon_alt = float(fields[5])          # 气球高度
+                    self.balloon_spd = float(fields[6])         # 气球速度
+                    self.balloon_sats = int(fields[7])          # 卫星数量
+                    self.balloon_heading = float(fields[8])     # 气球航向
+                    self.balloon_temprature = float(fields[9])  # 球上温度
+                    self.balloon_voltage = float(fields[10])    # 球上电压
+                    self.gps_validity = fields[11]              # 定位状态
                 else:
-                    self.debug_info("遥测数据字段不足，解析失败")
+                    self.debug_info(f"[警告] 遥测数据格式错误: {text}")
+                    return
             except Exception as e:
                 self.debug_info(f"遥测数据解析出错：{e}")
+                return
+            
+            # 更新 UI 显示
+            self.Frame_type_output.setText(f"基本遥测帧 {telemetry_counter}")
+            self.Frame_type_output.adjustSize()
+
+            # GPS 有效性检查
+            if self.gps_validity == "A":
+                self.debug_info(f"遥测数据已更新")
+                # 控制旋转器
+                self.Rotator_AZ, self.Rotator_EL = self.calculate_az_el(new_balloon_lat, new_balloon_lng, new_balloon_alt)
+                # 更新数值
+                self.balloon_lat = new_balloon_lat
+                self.balloon_lng = new_balloon_lng
+                self.balloon_alt = new_balloon_alt
+                # 更新标签显示
+                self.GPS_status_icon.setPixmap(success)
+                self.GPS_label.setText(f"GPS 数据：就绪")
+                self.GPS_label.adjustSize()
+                self.GPS_LAT_NUM.setText(f"{self.balloon_lat:.6f}")
+                self.GPS_LAT_NUM.adjustSize()
+                self.GPS_LON_NUM.setText(f"{self.balloon_lng:.6f}")
+                self.GPS_LON_NUM.adjustSize()
+                self.GPS_ALT_NUM.setText(f"{self.balloon_alt:.2f} m")
+                self.GPS_ALT_NUM.adjustSize()
+                self.GPS_SPD_NUM.setText(f"{self.balloon_spd:.2f} m/s")
+                self.GPS_SPD_NUM.adjustSize()
+                self.GPS_SATS_NUM.setText(f"{self.balloon_sats}")
+                self.GPS_SATS_NUM.adjustSize()
+                self.GPS_heading_NUM.setText(f"{self.balloon_heading:.2f}")
+                self.GPS_heading_NUM.adjustSize()
+                self.rotator_az_NUM.setText(f"{self.Rotator_AZ:.2f}")
+                self.rotator_az_NUM.adjustSize()
+                self.rotator_el_NUM.setText(f"{self.Rotator_EL:.2f}")
+                self.rotator_el_NUM.adjustSize()
+
+                # 更新地图显示
+                self.update_map_position()
+            else:
+                self.GPS_status_icon.setPixmap(failure)
+                self.debug_info(f"[注意] GPS 数据无效")
+                # 更新标签
+                self.GPS_label.setText(f"GPS 数据：无效")
+                self.GPS_label.adjustSize()
+
+            # 获取现在的时间并将其格式化
+            time_received = datetime.now(timezone.utc)
+            time_received = time_received.strftime('%Y-%m-%dT%H:%M:%S') + 'Z'
+
+            # 调用 SondeHub API接口
+            try:
+                command_args = [
+                    "./sondehub",
+                    f"{self.callsign}",            # 上传者呼号
+                    f"{time_received}",            # 接收时间
+                    f"{balloon_callsign}",         # 气球呼号
+                    f"{self.balloon_time}",        # 球上时间
+                    f"{new_balloon_lng}",          # 气球经度
+                    f"{new_balloon_lat}",          # 气球纬度
+                    f"{new_balloon_alt}",          # 气球高度 
+                    f"{self.balloon_heading}",     # 气球航向
+                    f"{self.balloon_spd}",         # 气球速度 
+                    f"{self.balloon_sats}",        # 卫星数量
+                    f"{self.balloon_temprature}",  # 球上温度
+                    f"{self.balloon_voltage}",     # 球上电压
+                    f"{self.local_lng}",           # 地面站经度
+                    f"{self.local_lat}",           # 地面站纬度
+                    f"{self.local_alt}",           # 地面站高度
+                    "normal"                       # 开发状态
+                ]
+                subprocess.Popen(command_args)
+            except Exception as e:
+                self.debug_info(f"SondeHub上传失败: {e}")
+                return False
+            
             return
         
         # 处理 ## 开头的中继数据帧
@@ -501,56 +722,70 @@ class GUI(QWidget):
                 self.debug_info(f"中继数据解析出错：{e}")
             return
 
-        # 启动阶段
-        if "Booting" in text:
-             self.init_status_icon.setPixmap(hourglass)
-             self.debug_info("正在启动...")
-        elif "Calibrate Failed" in text:
-            self.Camera_status_icon.setPixmap(error)
-            self.debug_info("相机初始化失败！")
-        elif "Calibrating camera" in text:
-            self.Camera_status_icon.setPixmap(hourglass)
-            self.debug_info("相机初始化成功，开始校准！")
-        elif "Camera Calibrate" in text:
-            self.Camera_status_icon.setPixmap(correct)
-            self.debug_info("相机校准完成！")
-        elif "GPS Initializing" in text:
-            self.GPS_status_icon.setPixmap(hourglass)
-            self.debug_info("GPS初始化中...")
-        elif "GPS init Completed" in text:
-            self.GPS_status_icon.setPixmap(correct)
-            self.debug_info("GPS初始化完成！")
-        elif "GPS init Falied" in text:
-            self.GPS_status_icon.setPixmap(error)
-            self.debug_info("GPS初始化失败！")
-        elif "Init Done" in text:
-             self.init_status_icon.setPixmap(correct)
-             self.debug_info("初始化全部完成！")
-        elif "SSDV Encoding: image" in text:
-            self.debug_info(f"正在编码第 {self.img_num + 1} 张图片")
-        elif "SSDV End" in text:
-            self.debug_info(f"第 {self.img_num} 张图片接收完成")
-            self.debug_info(f"共收到 {self.frame_num} 帧")
-        # 如果是其他信息，直接显示在调试信息框中
+        # 处理系统状态码 (Code: 0xXXXX)
+        elif text.startswith("Code:"):
+            self.Frame_type_output.setText(f"状态提示帧")
+            self.Frame_type_output.adjustSize()
+            
+            # 使用正则表达式解析状态码和可选的Payload
+            match = re.search(r"Code: 0x([0-9A-Fa-f]{4})(?:, Info: (.*))?", text)
+            if not match:
+                return
+
+            # 提取状态码和 Payload
+            status_code_hex = match.group(1)
+            payload_hex = match.group(2)
+            status_code = int(status_code_hex, 16)
+
+            # 从字典中查找对应的处理信息
+            if status_code in self.status_code_map:
+                prompt, icon_category, icon = self.status_code_map[status_code]
+                
+                # 调用翻译函数，构造并显示调试信息
+                debug_message = f"{prompt}"
+                if payload_hex:
+                    translated_payload = self.translate_payload(status_code, payload_hex)
+                    debug_message += f": {translated_payload}"
+                
+                self.debug_info(debug_message)
+
+                # 更新对应的状态图标
+                if icon_category and icon:
+                    if icon_category == "init":
+                        self.init_status_icon.setPixmap(icon)
+                    elif icon_category == "camera":
+                        self.Camera_status_icon.setPixmap(icon)
+                    elif icon_category == "gps":
+                        self.GPS_status_icon.setPixmap(icon)
+                    elif icon_category == "data":
+                        self.Data_status_icon.setPixmap(icon)
+            else:
+                self.debug_info(f"收到未知状态码: 0x{status_code_hex.upper()}")
+            return
+        
+        # 对于不符合任何已知格式的文本，直接显示
         else:
-            self.debug_info(f"收到信息：{text}")
+            self.debug_info(f"{text}")
+
 
     # 提取 SSDV 数据
     def try_extract_ssdv(self) -> bool:
         
         # 定义帧信息并寻找帧头
-        header = b"\x55\x67\xB9\xD9\x5B\x2F"
+        header1 = b"\x55\x67" # NOFEC模式
+        header2 = b"\x55\x66" # 正常模式
         frame_len = 256
-        start = self.buffer.find(header)
+        start = self.rx_buffer.find(header1)
+        if start == -1: start = self.rx_buffer.find(header2)
 
         # 首先判断是否为完整帧再进行提取
-        if start == -1 or len(self.buffer) - start < frame_len: return False
-        frame = self.buffer[start:start + frame_len]
+        if start == -1 or len(self.rx_buffer) - start < frame_len: return False
+        frame = self.rx_buffer[start:start + frame_len]
 
         # 接收到SSDV数据包证明数传正常，摄像头工作正常，初始化正常
-        self.Data_status_icon.setPixmap(correct)
-        self.Camera_status_icon.setPixmap(correct)
-        self.init_status_icon.setPixmap(correct)
+        self.Data_status_icon.setPixmap(success)
+        self.Camera_status_icon.setPixmap(success)
+        self.init_status_icon.setPixmap(success)
 
         # 提取图像编号并检查是否变化
         try:
@@ -562,7 +797,7 @@ class GUI(QWidget):
                 self.frame_num = 1
         except:
             print("图像编号提取失败")
-            self.buffer = self.buffer[start + frame_len:]
+            self.rx_buffer = self.rx_buffer[start + frame_len:]
             return False
         
         # 累计帧计数
@@ -570,6 +805,10 @@ class GUI(QWidget):
         self.Frame_type_output.adjustSize()
         self.frame_num += 1
 
+        # 图像文件名
+        self.SSDV_name_output.setText(f"{self.filename}")
+        self.SSDV_name_output.adjustSize()
+        
         # 确保 'dat' 文件夹存在并将接收到的数据进行存储
         os.makedirs("dat", exist_ok=True)
         dat_filepath = f"dat/{self.filename}.dat"
@@ -580,21 +819,22 @@ class GUI(QWidget):
             self.debug_info(f"写入 SSDV 数据失败: {e}")
             return False
 
-        # 调用 SSDV 解码器解调存储的 dat 文件
-        try:
-            subprocess.run(["./ssdv", "-d", f"dat/{self.filename}.dat", f"{self.filename}.jpg"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except Exception as e:
-            self.debug_info(f"SSDV 解码失败: {e}")
-            self.buffer = self.buffer[start + frame_len:]
-            return False
-
-        # 确认文件存在再加载图像
-        if os.path.exists(f"{self.filename}.jpg"):
-            self.SSDV_IMG.setPixmap(QPixmap(f"{self.filename}.jpg").scaled(320, 240, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
-            self.SSDV_IMG.repaint()
+        # 启动一个工作线程来解码 SSDV，避免阻塞 UI
+        output_jpg_path = f"{self.filename}.jpg"
+        self.decoder_thread = SsdvDecoderThread(dat_filepath, output_jpg_path, self)
+        
+        # 连接解码完成信号到处理结果的槽
+        self.decoder_thread.decoding_finished.connect(self.on_decoding_finished)
+        
+        # 连接日志信号到显示调试信息的槽
+        self.decoder_thread.log_message.connect(self.debug_info)
+        
+        # 确保线程结束后能被Qt安全地回收内存
+        self.decoder_thread.finished.connect(self.decoder_thread.deleteLater) 
+        self.decoder_thread.start()
 
         # 从缓冲区移除已处理数据
-        self.buffer = self.buffer[start + frame_len:]
+        self.rx_buffer = self.rx_buffer[start + frame_len:]
         return True
     
     # 管理收发信机串口连接
@@ -614,7 +854,7 @@ class GUI(QWidget):
 
             # 检查是否已经成功连接
             if self.Radio_Serial_Thread and self.Radio_Serial_Thread.isRunning():
-                self.Radio_COM_status.setPixmap(correct)
+                self.Radio_COM_status.setPixmap(success)
                 self.Radio_COM_button.setText("断开")
                 print(f"接收机串口已连接：{port_name}")
                 self.debug_info(f"接收机串口已连接：{port_name}")
@@ -624,7 +864,7 @@ class GUI(QWidget):
                 self.Radio_Serial_Thread.stop()
 
             # 手动断开时，也应该确保UI状态正确更新
-            self.Radio_COM_status.setPixmap(waiting)
+            self.Radio_COM_status.setPixmap(standby)
             self.Radio_COM_button.setText("连接")
 
             # 确保线程对象被清理
@@ -649,6 +889,11 @@ class GUI(QWidget):
                 self.Radio_Serial_Thread.send_data(data_to_send.encode('utf-8'))
             except Exception as e:
                 print(f"数据编码发送时发生错误: {e}")
+
+            # 记录发送的数据到日志文件
+            time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            with open("log.txt", "a", encoding="utf-8") as f:
+                f.write(f"{time}    » {data_to_send}")
         else:
             self.debug_info("接收机串口未连接或未运行，无法发送数据。")
             QMessageBox.warning(self, "发送失败", "接收机串口未连接或未运行。")
@@ -663,7 +908,7 @@ class GUI(QWidget):
         ports = list_ports.comports()
         current_ports = [(p.device, p.description) for p in ports]
 
-        # 初始化缓存（首次调用）
+        # 初始化缓存 (首次调用) 
         if not hasattr(self, 'port_list_cache'):
             self.port_list_cache = []
             self.Radio_COM_Combo.addItem("尚未选择", userData=None)
@@ -702,7 +947,7 @@ class GUI(QWidget):
         else:
             self.Radio_COM_Combo.setCurrentIndex(0)
             if Radio_Selected is not None:
-                self.Radio_COM_status.setPixmap(error)
+                self.Radio_COM_status.setPixmap(failure)
                 QMessageBox.warning(self, "警告：串口断开", f"收发信机串口 {Radio_Selected} 已断开。")
     
         # 检查已经连接的旋转器串口是否仍然可用
@@ -713,7 +958,7 @@ class GUI(QWidget):
         else:
             self.Rotator_COM_Combo.setCurrentIndex(0)
             if Rotator_Selected is not None:
-                self.Rotator_COM_status.setPixmap(error)
+                self.Rotator_COM_status.setPixmap(failure)
                 QMessageBox.warning(self, "警告：串口断开", f"旋转器串口 {Rotator_Selected} 已断开。")
     
         self.Radio_COM_Combo.blockSignals(False)
@@ -732,7 +977,6 @@ class GUI(QWidget):
             lon = np.radians(lon_deg)
 
             N = a / np.sqrt(1 - e2 * np.sin(lat)**2)
-
             x = (N + alt_m) * np.cos(lat) * np.cos(lon)
             y = (N + alt_m) * np.cos(lat) * np.sin(lon)
             z = (N * (1 - e2) + alt_m) * np.sin(lat)
@@ -767,66 +1011,138 @@ class GUI(QWidget):
             hor_dist = np.sqrt(east**2 + north**2)
             el = np.degrees(np.arctan2(up, hor_dist))
             return az, el
-        
-        # 计算两个角度的无符号最小差值
-        def angle_diff(a, b):
-            diff = abs(a - b) % 360
-            return diff if diff <= 180 else 360 - diff
 
         # 计算两个角度的有符号最小差值
         def angle_diff_sign(a, b):
             diff = (a - b + 180) % 360 - 180
             return diff
-
+            
         # 环绕角平滑滤波 (AZ)
         # AZ 轴受到的主要影响为平面差距过小以及定位数据错误带来的剧烈变化
-        def angle_smooth(old_angle, new_angle, alpha=0.3):
-            # 排除平面差距过小带来的剧烈反应
-            if angle_diff(old_angle, new_angle) > 30 and abs(self.balloon_lat - self.local_lat) < 0.00027 and abs(self.balloon_lng - self.local_lng) < 0.00027 :
+        def angle_smooth(old_angle, new_angle, current_elevation, alpha=0.3):
+            # 天顶奇点判断：如果俯仰角高于85度，说明天线几乎垂直向上，此时方位角极不稳定，直接返回旧的角度，冻结方位角转动。
+            if current_elevation > 85.0:
                 return old_angle
-            # 排除定位数据错误带来的剧烈反应
-            elif abs(self.balloon_lat - new_balloon_lat) > 0.01 or abs(self.balloon_lng - new_balloon_lng) > 0.01 :
+
+            # GPS数据跳变过滤
+            if abs(self.balloon_lat - new_balloon_lat) > 0.01 or abs(self.balloon_lng - new_balloon_lng) > 0.01:
                 return old_angle
-            else:
-                diff = angle_diff_sign(new_angle, old_angle)
-                smoothed = (old_angle + alpha * diff) % 360
-                return smoothed
+            
+            # 标准平滑处理
+            diff = angle_diff_sign(new_angle, old_angle)
+            smoothed = (old_angle + alpha * diff) % 360
+            return smoothed
 
         # 线性角平滑滤波 (EL)
         # EL 轴受到的影响主要为定位数据错误带来的剧烈变化
         def linear_smooth(old_val, new_val, alpha=0.5):                
-            # 排除定位数据错误带来的剧烈反应
-            if abs(old_val - new_val) > 20 or abs(self.balloon_alt - new_balloon_alt) > 200 :
+            # 仅在高度数据发生巨大跳变时才拒绝更新
+            if abs(self.balloon_alt - new_balloon_alt) > 200:
                 return old_val
-            else:
-                return alpha * new_val + (1 - alpha) * old_val
+            
+            # 对所有有效数据进行平滑处理
+            return alpha * new_val + (1 - alpha) * old_val
+        
+        # 无论如何，先计算出原始的方位角和俯仰角
+        ecef_local = geodetic_to_ecef(self.local_lat, self.local_lng, self.local_alt)
+        ecef_balloon = geodetic_to_ecef(new_balloon_lat, new_balloon_lng, new_balloon_alt)
+        enu = ecef_to_enu(ecef_balloon, ecef_local, self.local_lat, self.local_lng)
+        azimuth, elevation = enu_to_az_el(enu)
 
-        # 仅在判定放飞后进行计算
-        if self.balloon_alt - self.local_alt >= 50:
-            # 计算地面站的 ECEF 坐标
-            ecef_local = geodetic_to_ecef(self.local_lat, self.local_lng, self.local_alt)
-            # 计算气球的 ECEF 坐标
-            ecef_balloon = geodetic_to_ecef(new_balloon_lat, new_balloon_lng, new_balloon_alt)
-            # 计算地面站与气球之间的 ENU 向量
-            enu = ecef_to_enu(ecef_balloon, ecef_local, self.local_lat, self.local_lng)
-            # 将 ENU 向量转换为方位角与俯仰角
-            azimuth, elevation = enu_to_az_el(enu)
-
-            # 用滤波器平滑角度，避免GPS误差导致跳变
-            azimuth_smoothed = angle_smooth(self.Rotator_AZ, azimuth)
+        # 只有当目标出现在地平线1度以上时才启动跟踪。
+        if elevation > 1.0:
+            # 传入当前计算出的俯仰角用于天顶判断
+            azimuth_smoothed = angle_smooth(self.Rotator_AZ, azimuth, elevation)
             elevation_smoothed = linear_smooth(self.Rotator_EL, elevation)
             return azimuth_smoothed, elevation_smoothed
         
-        # 若未放飞，则旋转器按兵不动，保持零位
-        elif self.Rotator_AZ != 0.00 or self.Rotator_EL != 90.00:
-            return 0.00, 90.00
-        
-        return self.Rotator_AZ, self.Rotator_EL
+        # 如果目标在地平线以下，则旋转器按兵不动，保持零位
+        else:
+            # 如果旋转器当前不在待命位置，则命令其进入待命位置
+            if self.Rotator_AZ != 0.00 or self.Rotator_EL != 00.00:
+                return 0.00, 00.00
+            # 如果已经在待命位置，就保持不动
+            else:
+                return self.Rotator_AZ, self.Rotator_EL
 
     # 更新气球在地图中的位置
     def update_map_position(self):
         js_code = f"updatePosition({self.balloon_lat}, {self.balloon_lng}, {self.local_lat}, {self.local_lng});"
         self.map_view.page().runJavaScript(js_code)
+
+    # 枚举值翻译函数
+    def translate_payload(self, status_code, payload):
+        
+        # 处理摄像头尺寸相关的状态码
+        if status_code in [0x5104, 0x5013]:
+            return self.CAM_SIZE_MAP.get(payload, payload)
+            
+        # 处理SSDV类型相关的状态码
+        elif status_code in [0x5102, 0x5010]:
+            return self.SSDV_TYPE_MAP.get(payload, payload)
+        
+        # 对于布尔值 ON/OFF 的翻译
+        elif status_code in [0x5100, 0x5101]:
+             return "ON" if payload == "1" else "OFF"
+        
+        # 处理 SSDV 图像 ID 的格式化
+        elif status_code in [0x4000, 0x4001]: # SSDV_ENCODE_START, SSDV_ENCODE_END
+            # 使用 zfill(3) 将数字字符串格式化为3位，不足则补零
+            return payload.zfill(3)
+        
+        # 翻译各种失败状态码
+        # CAM_INIT_FAIL, CAM_RECONFIG_FAIL, CAM_RESTORE_DEFAULT_FAIL, CAM_CALIBRATE_FAIL
+        # CAM_CAPTURE_FAIL, SSDV_ENCODE_ERROR, ADC_SAMPLE_FAIL
+        elif status_code in [0x2002, 0x2009, 0x200B, 0x2005, 0x2006,0x4002,0x6000 ]:
+            error_name = self.ESP_ERR_MAP.get(payload, f"未知错误码: {payload}")
+            return f"错误详情: {error_name}"
+             
+        # 如果没有匹配的翻译规则，直接返回原始的payload
+        else:
+            return payload
+
+    # SSDV 解码线程完成后的槽函数，此函数在主线程中被调用，可以安全地更新UI。
+    def on_decoding_finished(self, jpg_filepath):
+
+        # 检查解码是否成功
+        if jpg_filepath and os.path.exists(jpg_filepath):
+            pixmap = QPixmap(jpg_filepath)
+            # 检查文件是否可被 QPixmap 加载
+            if not pixmap.isNull():
+                self.SSDV_IMG.setPixmap(pixmap.scaled(320, 240, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+                self.SSDV_IMG.repaint()
+            else:
+                print(f"解码文件 {os.path.basename(jpg_filepath)} 已生成但无法加载。")
+        else:
+            self.debug_info(f"SSDV 图像解码失败。")
+
+    # QSO类的槽函数，用于更新配置
+    def update_ground_station_settings(self, new_callsign, new_lat, new_lng, new_alt):
+
+        # 更新主窗口的内部变量
+        self.callsign = new_callsign
+        self.local_lat = new_lat
+        self.local_lng = new_lng
+        self.local_alt = new_alt
+
+        # 更新配置文件中的信息
+        if not config.has_section("GroundStation"):
+            config.add_section("GroundStation")
+
+        config.set("GroundStation", "Callsign", new_callsign)
+        config.set("GroundStation", "Latitude", str(new_lat))
+        config.set("GroundStation", "Longitude", str(new_lng))
+        config.set("GroundStation", "Altitude", str(new_alt))
+
+        with open("config.ini", "w") as configfile:
+            config.write(configfile)
+
+        # 如果 QSO 窗口已打开，更新它的信息
+        if self.QSO_window:
+            self.QSO_window.update_station_info(self.callsign, self.local_lat, self.local_lng)
+
+        # 进行提示
+        self.debug_info("地面站信息已更新")
 
     # 启动设置窗口
     def SET(self):
@@ -835,6 +1151,10 @@ class GUI(QWidget):
                 self.SET_window = SET_Windows(self.callsign, self.local_lat, self.local_lng, self.local_alt) 
             except:
                 self.SET_window = SET_Windows("", "", "", "")
+
+            # 连接信号到槽函数
+            self.SET_window.settings_saved.connect(self.update_ground_station_settings)
+
         self.SET_window.show()
 
     # 启动 QSO 窗口
@@ -861,11 +1181,6 @@ class GUI(QWidget):
     # 主窗口关闭事件处理
     def closeEvent(self, event):
 
-         # 如果是为重启而退出，直接接受事件
-        if quitting_for_restart:
-            event.accept()
-            return
-
         warn = QMessageBox.question(self, "提示", "是否确定要退出程序？", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if warn == QMessageBox.StandardButton.Yes:
             QApplication.closeAllWindows()
@@ -875,6 +1190,8 @@ class GUI(QWidget):
 
 # 设置窗口
 class SET_Windows(QDialog):
+    # 定义一个信号，传递呼号、纬度、经度、高度
+    settings_saved = pyqtSignal(str, float, float, float)
 
     def __init__(self, callsign, current_lat, current_lng, current_alt):
         super().__init__()
@@ -901,27 +1218,27 @@ class SET_Windows(QDialog):
 
         # 呼号输入框
         self.callsign_input = QLineEdit(self)
-        self.callsign_input.setStyleSheet(LineEdit_style)
+        self.callsign_input.setStyleSheet(input_box_style)
         self.callsign_input.setText(self.current_callsign)
         layout.addRow("地面站呼号:", self.callsign_input)
 
         self.lat_input = QLineEdit(self)
-        self.lat_input.setStyleSheet(LineEdit_style)
+        self.lat_input.setStyleSheet(input_box_style)
         self.lat_input.setText(str(self.current_lat))
         layout.addRow("地面站纬度:", self.lat_input)
 
         self.lng_input = QLineEdit(self)
-        self.lng_input.setStyleSheet(LineEdit_style)
+        self.lng_input.setStyleSheet(input_box_style)
         self.lng_input.setText(str(self.current_lng))
         layout.addRow("地面站经度:", self.lng_input)
 
         self.alt_input = QLineEdit(self)
-        self.alt_input.setStyleSheet(LineEdit_style)
+        self.alt_input.setStyleSheet(input_box_style)
         self.alt_input.setText(str(self.current_alt))
         layout.addRow("地面站高度:", self.alt_input)
 
         self.save_button = QPushButton("保存", self)
-        self.save_button.setStyleSheet(Common_button_style)
+        self.save_button.setStyleSheet(common_button_style)
         self.save_button.clicked.connect(self.save_coords)
         layout.addRow(self.save_button)
 
@@ -950,52 +1267,21 @@ class SET_Windows(QDialog):
             if not (-12263 <= new_alt <= 8848.86):
                 QMessageBox.warning(self, "输入错误", "高度必须在 -12263 到 8848.86 之间。")
                 return
-            
-            # 检查是否产生变更
-            try:
-                is_unchanged = (new_callsign == self.current_callsign and
-                                new_lat == float(self.current_lat) and
-                                new_lng == float(self.current_lng) and
-                                new_alt == float(self.current_alt))
-            except (ValueError, TypeError):
-                is_unchanged = False
 
-            # 未变更则关闭窗口
-            if is_unchanged:
-                self.close()
-                return
+            # 发射信号，将新配置传递出去
+            self.settings_saved.emit(new_callsign, new_lat, new_lng, new_alt)
 
-            # 更新当前呼号和坐标
-            if not config.has_section("GroundStation"):
-                config.add_section("GroundStation")
-            config.set("GroundStation", "Callsign", new_callsign)
-            config.set("GroundStation", "Latitude", str(new_lat))
-            config.set("GroundStation", "Longitude", str(new_lng))
-            config.set("GroundStation", "Altitude", str(new_alt))
-
-            with open("config.ini", "w") as configfile:
-                config.write(configfile)
-
-            # 重启程序以加载最新配置文件
-            global quitting_for_restart
-            quitting_for_restart = True
-            try:
-                current_script_path = os.path.abspath(sys.argv[0]) 
-                # 构建新的命令行参数列表
-                command = [sys.executable, current_script_path] + sys.argv[1:]
-
-                QApplication.closeAllWindows()
-            
-                # 使用 Popen 在后台启动新进程
-                subprocess.Popen(command)
-            
-            except Exception as e:
-                print(f"[错误] 启动新进程失败：{e}")
+            self.accept()
 
         except ValueError:
             QMessageBox.warning(self, "输入错误", "请确保经度、纬度、高度输入为有效的数字。")
         except Exception as e:
             QMessageBox.critical(self, "错误", f"保存时发生未知错误: {e}")
+
+    # 当窗口关闭处理
+    def closeEvent(self, event):
+        self.reject()
+        event.accept()
 
 # 信息发送窗口
 class QSO_Windows(QWidget):
@@ -1021,16 +1307,19 @@ class QSO_Windows(QWidget):
 
         # 构建信息用的参数
         self.ToCallSign = "CQ"
-        self.ToMSG = "测试信息"
+        self.ToMSG = ""
 
         # 拼装后的信息
         self.TofullMSG = ""
 
-        # 统计信息
+        # 初始化统计信息
         self.rx_count = 0
         self.tx_count = 0
         self.QSO_count = 0
         self.qso_callsigns = set()
+
+        # 防止在程序自动滚动时触发 handle_scroll 逻辑
+        self.is_auto_scrolling = False 
 
         # 初始化UI
         self.init_ui()
@@ -1040,36 +1329,36 @@ class QSO_Windows(QWidget):
         # 信息发送区
         self.send_info_frame = QWidget(self)
         self.send_info_frame.setGeometry(30, 25, 290, 100)
-        self.send_info_frame.setStyleSheet(frame_style)
+        self.send_info_frame.setStyleSheet(qso_frame_style)
 
         self.Callsign_label = QLabel(self)
         self.Callsign_label.setText("信息发送")
         self.Callsign_label.move(35, 30)
-        self.Callsign_label.setStyleSheet(tip_style)
+        self.Callsign_label.setStyleSheet(tip_text_style)
 
         self.Callsign_label = QLabel(self)
         self.Callsign_label.setText("呼号：")
         self.Callsign_label.move(40, 60)
-        self.Callsign_label.setStyleSheet(title_style)
+        self.Callsign_label.setStyleSheet(primary_text_style)
 
         self.Callsign_input = QLineEdit(self)
-        self.Callsign_input.setStyleSheet(LineEdit_style)
+        self.Callsign_input.setStyleSheet(input_box_style)
         self.Callsign_input.move(100, 60)
         self.Callsign_input.setText(str(self.ToCallSign))
         
         self.MSG_label = QLabel(self)
         self.MSG_label.setText("信息：")
         self.MSG_label.move(40, 90)
-        self.MSG_label.setStyleSheet(title_style)
+        self.MSG_label.setStyleSheet(primary_text_style)
 
         self.MSG_input = QLineEdit(self)
-        self.MSG_input.setStyleSheet(LineEdit_style)
+        self.MSG_input.setStyleSheet(input_box_style)
         self.MSG_input.move(100, 90)
         self.MSG_input.setText(self.ToMSG)
 
         self.TX_button = QPushButton("发送信息", self)
         self.TX_button.setGeometry(225, 62, 80, 50)
-        self.TX_button.setStyleSheet(Common_button_style)
+        self.TX_button.setStyleSheet(common_button_style)
         self.TX_button.clicked.connect(self.TX)
 
         self.cooldown_ms = 300
@@ -1080,47 +1369,47 @@ class QSO_Windows(QWidget):
         # 信息统计区
         self.count_frame = QWidget(self)
         self.count_frame.setGeometry(330, 25, 160, 100)
-        self.count_frame.setStyleSheet(frame_style)
+        self.count_frame.setStyleSheet(qso_frame_style)
 
         self.rx_count_label = QLabel(self)
         self.rx_count_label.setText("接收计数：")
         self.rx_count_label.move(340, 40)
-        self.rx_count_label.setStyleSheet(title_style)
+        self.rx_count_label.setStyleSheet(primary_text_style)
 
         self.rx_count_num = QLabel(self)
         self.rx_count_num.setText(str(self.rx_count))
         self.rx_count_num.move(420, 40)
-        self.rx_count_num.setStyleSheet(title_style)
+        self.rx_count_num.setStyleSheet(primary_text_style)
 
         self.tx_count_label = QLabel(self)
         self.tx_count_label.setText("发送计数：")
         self.tx_count_label.move(340, 65)
-        self.tx_count_label.setStyleSheet(title_style)
+        self.tx_count_label.setStyleSheet(primary_text_style)
 
         self.tx_count_num = QLabel(self)
         self.tx_count_num.setText(str(self.tx_count))
         self.tx_count_num.move(420, 65)
-        self.tx_count_num.setStyleSheet(title_style)
+        self.tx_count_num.setStyleSheet(primary_text_style)
 
         self.QSO_count_label = QLabel(self)
         self.QSO_count_label.setText("通联计数：")
         self.QSO_count_label.move(340, 90)
-        self.QSO_count_label.setStyleSheet(title_style)
+        self.QSO_count_label.setStyleSheet(primary_text_style)
 
         self.QSO_count_num = QLabel(self)
         self.QSO_count_num.setText(str(self.QSO_count))
         self.QSO_count_num.move(420, 90)
-        self.QSO_count_num.setStyleSheet(title_style)
+        self.QSO_count_num.setStyleSheet(primary_text_style)
 
         # 台站信息区
         self.station_info_frame = QWidget(self)
         self.station_info_frame.setGeometry(510, 25, 250, 100)
-        self.station_info_frame.setStyleSheet(frame_style)
+        self.station_info_frame.setStyleSheet(qso_frame_style)
         
         self.station_info_label = QLabel(self)
         self.station_info_label.setText("站点信息")
         self.station_info_label.move(515, 30)
-        self.station_info_label.setStyleSheet(tip_style)
+        self.station_info_label.setStyleSheet(tip_text_style)
 
         self.My_Callsign_label = QLabel(self.station_info_frame)
         self.My_Callsign_label.setText(self.callsign)
@@ -1131,13 +1420,13 @@ class QSO_Windows(QWidget):
         self.My_grid_label = QLabel(self.station_info_frame)
         self.My_grid_label.setText(self.grid)
         self.My_grid_label.setGeometry(10, 55, 230, 30)
-        self.My_grid_label.setStyleSheet(grid_style)
+        self.My_grid_label.setStyleSheet(primary_text_style)
         self.My_grid_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         # 通联信息区
         self.info_frame = QWidget(self)
         self.info_frame.setGeometry(30, 150, 460, 320)
-        self.info_frame.setStyleSheet(frame_style)
+        self.info_frame.setStyleSheet(qso_frame_style)
 
         info_layout = QVBoxLayout(self.info_frame)
         info_layout.setContentsMargins(5, 5, 5, 5)
@@ -1146,7 +1435,7 @@ class QSO_Windows(QWidget):
         # 设置列数和列头标签
         self.info_table.setColumnCount(4)
         self.info_table.setHorizontalHeaderLabels(["  时间  ", "  源站呼号  ", "  目标呼号  ", "信息"])
-        self.info_table.horizontalHeader().setStyleSheet(title_style)
+        self.info_table.horizontalHeader().setStyleSheet(primary_text_style)
 
         # 设置列宽自适应填充可用空间
         self.info_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -1161,6 +1450,18 @@ class QSO_Windows(QWidget):
         self.info_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.info_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         info_layout.addWidget(self.info_table)
+
+        # 创建“滚动到底部”按钮，初始时隐藏
+        self.scrollToBottomButton = QPushButton("▼", self.info_frame)
+        self.scrollToBottomButton.hide() 
+        self.scrollToBottomButton.setStyleSheet(common_button_style)
+        self.scrollToBottomButton.setGeometry(440, 290, 20, 20)
+
+        # 连接点击事件
+        self.scrollToBottomButton.clicked.connect(self.info_table.scrollToBottom)
+
+        # 监听滚动条的动作，以便在用户手动滚动时隐藏按钮
+        self.info_table.verticalScrollBar().actionTriggered.connect(self.handle_scroll)
 
         # 当单元格被双击时，触发 fill_callsign_from_table 方法
         self.info_table.cellDoubleClicked.connect(self.fill_callsign_from_table)
@@ -1182,7 +1483,7 @@ class QSO_Windows(QWidget):
         # QSO 信息区
         self.info_QSO_frame = QWidget(self)
         self.info_QSO_frame.setGeometry(510, 220, 250, 250)
-        self.info_QSO_frame.setStyleSheet(frame_style)
+        self.info_QSO_frame.setStyleSheet(qso_frame_style)
 
         QSO_info_layout = QVBoxLayout(self.info_QSO_frame)
         QSO_info_layout.setContentsMargins(5, 5, 5, 5)
@@ -1191,7 +1492,7 @@ class QSO_Windows(QWidget):
         # 设置列数和列头标签
         self.QSO_info_table.setColumnCount(3)
         self.QSO_info_table.setHorizontalHeaderLabels(["   时间   ", "  呼号  ", "  网格  "])
-        self.QSO_info_table.horizontalHeader().setStyleSheet(title_style)
+        self.QSO_info_table.horizontalHeader().setStyleSheet(primary_text_style)
 
         # 设置列宽自适应填充可用空间
         self.QSO_info_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -1204,6 +1505,16 @@ class QSO_Windows(QWidget):
         self.QSO_info_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.QSO_info_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         QSO_info_layout.addWidget(self.QSO_info_table)
+
+    def update_station_info(self, callsign, lat, lng):
+        self.callsign = callsign
+        self.current_lat = lat
+        self.current_lng = lng
+        self.grid = self.latlng_to_maiden(self.current_lat, self.current_lng)
+        
+        # 更新UI上的显示
+        self.My_Callsign_label.setText(self.callsign)
+        self.My_grid_label.setText(self.grid)
 
     # 格式：“##ToCall,FmCall,Gird,INFO\n”
     def TX(self):
@@ -1254,7 +1565,10 @@ class QSO_Windows(QWidget):
     # 添加数据到通联信息表格(此函数同时从串口线程读取数据)
     def add_info_table_row(self, time_str, source_call, target_call, grid, message, program):
 
-        # 计数
+        scrollbar = self.info_table.verticalScrollBar()
+        is_at_bottom = scrollbar.value() >= scrollbar.maximum() - 5
+
+        # 计数器
         self.rx_count += 1
 
         # 直接使用 self.info_table 访问表格实例
@@ -1315,11 +1629,13 @@ class QSO_Windows(QWidget):
                 if item:
                     item.setBackground(QColor("#FFFFFF"))
 
-        # 信息滚动
-        scrollbar = self.info_table.verticalScrollBar()
-        at_bottom = scrollbar.value() == scrollbar.maximum()
-        if at_bottom:
+        # 根据位置决定是自动滚动还是显示按钮
+        if is_at_bottom:
+            self.is_auto_scrolling = True
             self.info_table.scrollToBottom()
+        else:
+            self.scrollToBottomButton.show()
+            self.scrollToBottomButton.raise_()
 
         # 更新计数
         self.rx_count_num.setText(str(self.rx_count))
@@ -1385,6 +1701,19 @@ class QSO_Windows(QWidget):
             if FmCallsign != self.callsign:
                 self.Callsign_input.setText(FmCallsign)
 
+    # 快捷按钮逻辑
+    def handle_scroll(self):
+        # 如果是程序自动滚动到底部，则不作处理
+        if self.is_auto_scrolling:
+            self.is_auto_scrolling = False
+            return
+
+        scrollbar = self.info_table.verticalScrollBar()
+
+        # 如果用户手动滚动到了底部，隐藏提示按钮
+        if scrollbar.value() >= scrollbar.maximum() - 5:
+            self.scrollToBottomButton.hide()
+
     # 经纬度转梅登黑德网格
     def latlng_to_maiden(self, lat, lon):
         lat += 90
@@ -1397,53 +1726,173 @@ class QSO_Windows(QWidget):
 
 # 命令窗口
 class Command_Windows(QWidget):
-    # 定义一个信号，用于发射时向主窗口传输拼装好的信息
+
+    # 定义一个信号，用于发送消息
     tx_message = pyqtSignal(str)
 
+    # 定义窗口基本信息
     def __init__(self):
         super().__init__()
 
-        # 窗口属性
         icon = QIcon('UI/logo.ico')
         self.setWindowIcon(icon)
-        self.resize(250, 100)
-        self.setFixedSize(250, 100)
+        self.resize(400, 260)
+        self.setFixedSize(400, 260)
         self.setWindowTitle('命令发送')
-        self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
+        self.setStyleSheet('QWidget { background-color: rgb(223,237,249); font-size: 13px; }')
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+
+        # 定义可用的命令及其会话框表现
+        self.commands = {
+            ' 开启中继 (CTL,RELAY,ON)'  : ('CTL,RELAY,ON', False),
+            ' 关闭中继 (CTL,RELAY,OFF)' : ('CTL,RELAY,OFF', False),
+            ' 开启图传 (CTL,SSDV,ON)'   : ('CTL,SSDV,ON', False),
+            ' 关闭图传 (CTL,SSDV,OFF)'  : ('CTL,SSDV,OFF', False),
+            ' 重启系统 (CTL,SYS,REBOOT)': ('CTL,SYS,REBOOT', False),
+            ' 设置图传模式 (SET,SSDV_TYPE)'   : ('SET,SSDV_TYPE', True),
+            ' 设置图传质量 (SET,SSDV_QUALITY)': ('SET,SSDV_QUALITY', True),
+            ' 设置图传周期 (SET,SSDV_CYCLE)'  : ('SET,SSDV_CYCLE', True),
+            ' 设置图像尺寸 (SET,CAM_SIZE)'    : ('SET,CAM_SIZE', True),
+            ' 设置图像质量 (SET,CAM_QUALITY)' : ('SET,CAM_QUALITY', True),
+            ' 查询中继状态 (GET,RELAY)' : ('GET,RELAY', False),
+            ' 查询图传状态 (GET,SSDV)'  : ('GET,SSDV', False),
+            ' 查询相机参数 (GET,CAM)'   : ('GET,CAM', False),
+        }
 
         self.init_ui()
 
+    # 初始化主UI布局，主要是创建和设置选项卡
     def init_ui(self):
-        # 使用垂直布局
-        layout = QVBoxLayout(self)
+        main_layout = QVBoxLayout(self)
 
-        # 命令输入框
-        self.command_input = QLineEdit(self)
-        self.command_input.setPlaceholderText("在此输入要发送的命令...")
-        self.command_input.setStyleSheet(LineEdit_style)
-        layout.addWidget(self.command_input)
+        tabs = QTabWidget()
+        self.tab_structured = QWidget()
+        self.tab_freeform = QWidget()
+        tabs.addTab(self.tab_structured, "预设命令")
+        tabs.addTab(self.tab_freeform, "自由命令")
 
-        # 发送按钮
-        self.send_button = QPushButton("发送", self)
-        self.send_button.setStyleSheet(Common_button_style)
-        self.send_button.clicked.connect(self.send_command)
-        layout.addWidget(self.send_button)
+        self.init_structured_tab()
+        self.init_freeform_tab()
+        main_layout.addWidget(tabs)
+        self.setLayout(main_layout)
 
-        self.setLayout(layout)
+    # 初始化预设命令选项卡
+    def init_structured_tab(self):
 
-    # 获取输入框文本并发送
-    def send_command(self):
+        # 使用 QVBoxLayout 使内容垂直居中
+        page_layout = QVBoxLayout(self.tab_structured)
+        page_layout.setContentsMargins(15, 20, 15, 15)
 
-        # 获取输入框的文本，并移除前后的空白字符
-        command_text = self.command_input.text().strip()
+        # 创建一个容器Widget来承载QFormLayout
+        form_widget = QWidget()
+        layout = QFormLayout(form_widget)
+        layout.setVerticalSpacing(15)
 
-        # 检查命令是否为空
+        # 预设命令下拉栏
+        self.cmd_combo = QComboBox()
+        self.cmd_combo.setFixedHeight(28)
+        self.cmd_combo.setStyleSheet(combo_box_style)
+
+        # 预设命令参数框
+        self.value_input = QLineEdit()
+        self.value_input.setFixedHeight(28)
+        self.value_input.setStyleSheet(input_box_style)
+        self.value_input.setPlaceholderText(" 请在此输入参数...")
+
+        # 预设命令发送按钮
+        send_button = QPushButton("发送", self)
+        send_button.setStyleSheet(common_button_style)
+        send_button.setFixedHeight(32)
+        send_button.setFixedWidth(100)
+
+        for display_text, (command, has_value) in self.commands.items():
+            self.cmd_combo.addItem(display_text, userData=(command, has_value))
+            if not command:
+                index = self.cmd_combo.count() - 1
+                self.cmd_combo.model().item(index).setEnabled(False)
+
+        layout.addRow("选择命令: ", self.cmd_combo)
+        layout.addRow("输入参数: ", self.value_input)
+        
+        # 为按钮创建一个水平布局，使其右对齐
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(send_button)
+
+        # 添加弹性伸缩实现垂直居中
+        page_layout.addStretch()
+        page_layout.addWidget(form_widget)
+        page_layout.addLayout(button_layout)
+        page_layout.addStretch()
+
+        self.cmd_combo.currentIndexChanged.connect(self.on_command_change)
+        send_button.clicked.connect(self.send_structured_command)
+        self.on_command_change(0)
+
+    # 初始化自由命令选项卡，提供一个多行文本框，用于输入任意格式的信息
+    def init_freeform_tab(self):
+
+        # 使用 QVBoxLayout 使内容垂直居中
+        layout = QVBoxLayout(self.tab_freeform)
+        layout.setContentsMargins(15, 20, 15, 15)
+        layout.setSpacing(10)
+
+        # 提示文字
+        info_label = QLabel("请输入自由命令：")
+        info_label.setStyleSheet("font-size: 13px;")
+
+        # 自由命令输入框
+        self.freeform_input = QPlainTextEdit()
+        self.freeform_input.setStyleSheet(input_box_style)
+        self.freeform_input.setPlaceholderText("例如：@@CTL,RELAY,ON")
+
+        # 自由命令发送按钮
+        send_button = QPushButton("发送", self)
+        send_button.setFixedHeight(32)
+        send_button.setFixedWidth(100)
+        send_button.setStyleSheet(common_button_style)
+        send_button.clicked.connect(self.send_freeform_command)
+
+        # 添加控件到布局
+        layout.addWidget(info_label)
+        layout.addWidget(self.freeform_input)
+        layout.addWidget(send_button, alignment=Qt.AlignmentFlag.AlignRight)
+
+    # 根据预设参数处理“输入参数”文本框的可用性
+    def on_command_change(self, index):
+
+        # 通过索引获取存储在item中的用户数据 (command, has_value)
+        _, has_value = self.cmd_combo.itemData(index)
+        # 根据has_value的值，启用或禁用参数输入框
+        self.value_input.setEnabled(has_value)
+        self.value_input.setPlaceholderText("请在此输入参数...")
+        # 如果命令不需要参数，为防止混淆，清空输入框
+        if not has_value:
+            self.value_input.clear()
+            self.value_input.setPlaceholderText("该命令无需参数。")
+
+    # 发送预设的结构化命令
+    def send_structured_command(self):
+        index = self.cmd_combo.currentIndex()
+        command, has_value = self.cmd_combo.itemData(index)
+        if not command:
+            return
+
+        value = self.value_input.text().strip()
+        if has_value and not value:
+            QMessageBox.warning(self, "警告", "该命令需要输入参数值。")
+            return
+
+        full_command = f"@@{command},{value}\n" if has_value else f"@@{command}\n"
+        self.tx_message.emit(full_command)
+
+    # 发送自由命令
+    def send_freeform_command(self):
+        command_text = self.freeform_input.toPlainText().strip()
         if not command_text:
             QMessageBox.warning(self, "警告", "发送的命令不能为空。")
             return
 
-        # 发射信号，将文本传递给主窗口的槽函数
         self.tx_message.emit(command_text + '\n')
 
 # 串口连接线程
@@ -1510,30 +1959,54 @@ class SerialConnection(QThread):
         self.quit()
         self.wait()
 
-# 检查配置文件是否存在且包含必要信息
-def is_config_valid():
-    try:
-        config.read('config.ini')
-        config.get("GroundStation", "Callsign")
-        config.getfloat("GroundStation", "Latitude")
-        config.getfloat("GroundStation", "Longitude")
-        config.getfloat("GroundStation", "Altitude")
-        return True
-    except Exception:
-        return False
+# SSDV 解码工作线程，避免阻塞主线程。
+class SsdvDecoderThread(QThread):
 
+    # 定义信号，解码完成后发射，参数为解码后的 jpg 文件路径
+    decoding_finished = pyqtSignal(str)
+
+    # 定义信号，解码过程中发射，参数为日志信息
+    log_message = pyqtSignal(str)
+
+    def __init__(self, dat_filepath, jpg_filepath, parent=None):
+        super().__init__(parent)
+        self.dat_filepath = dat_filepath
+        self.jpg_filepath = jpg_filepath
+
+    def run(self):
+        try:
+            # 调用解码程序
+            subprocess.run(
+                ["./ssdv", "-d", self.dat_filepath, self.jpg_filepath],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True
+            )
+
+            self.decoding_finished.emit(self.jpg_filepath)
+
+        except subprocess.CalledProcessError:
+            self.log_message.emit("[错误] SSDV解码失败，程序返回错误。")
+            self.decoding_finished.emit("")
+        except Exception as e:
+            self.log_message.emit(f"[错误] SSDV解码线程出现未知异常: {e}")
+            self.decoding_finished.emit("")
 # 主事件
 if __name__ == '__main__':
+
     app = QApplication(sys.argv)
 
-    # 检查配置文件
-    if is_config_valid(): 
-        main_window = GUI()
-        main_window.show()
-    else:
-        # 配置无效，启动设置对话框
-        QMessageBox.information(None, "欢迎", "首次运行，请先设置地面站信息。")
-        settings_dialog = SET_Windows("", "", "", "")
-        settings_dialog.show()
+    # 依赖程序检查
+    dependencies = ['./ssdv.exe', './sondehub.exe']
+    missing_files = [f for f in dependencies if not os.path.exists(f)]
+
+    if missing_files:
+        missing_str = "\n".join(missing_files)
+        QMessageBox.critical(None, "依赖文件缺失", "程序无法启动，缺少关键文件。")
+        sys.exit(1)
+
+    # 启动主窗口
+    main_window = GUI()
+    main_window.show()
             
 sys.exit(app.exec())
