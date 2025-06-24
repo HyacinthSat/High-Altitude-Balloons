@@ -7,7 +7,7 @@
 借助实现主要目的基本硬件，额外实现了业余无线电数字中继等功能  
 
 主要作者：[BG7ZDQ](https://github.com/X-MQSI)  
-![气球标识](https://github.com/user-attachments/assets/7b3a9489-7394-43fc-9d44-142d86b2f106)  
+![气球标识](./Image/Balloon_logo.png)  
 
 飞行数据仪表板: [hab.satellites.ac.cn](https://hab.satellites.ac.cn/)  
 
@@ -21,13 +21,13 @@
 ## 📸 系统展示  
 
 - **🎈 气球载荷**  
-![Balloon_PCB_仿真](https://github.com/user-attachments/assets/ba6ab02a-0ec4-4297-9382-652cf812d755)  
+![Balloon_PCB_仿真](./Image/Balloon_PCB.jpeg)  
 
 - **⚙️ 可配置数传单元**  
-![CDUT_装配](https://github.com/user-attachments/assets/670276f7-631c-4c8d-99bc-0450763e11d5)
+![CDTU_装配](./Image/CDTU_Assembly.png)
 
 - **📡 地面站程序**  
-![Ground_Station](https://github.com/user-attachments/assets/c483e5b9-bf6e-4d8e-be6a-f7b921d360d1)
+![Ground_Station](./Image/Ground_Station.png)
 
 ## 🛠️ 系统架构  
 整个项目由三个主要部分组成：  
@@ -39,9 +39,9 @@
 - `/Balloon.ino`: 主控程序。负责初始化板载硬件、采集传感器数据、构建遥测帧、捕获图像并使用 SSDV 协议编码，同时处理数字中继功能  
 - `/ssdv.c` & `/ssdv.h`: SSDV 图像编码库。实现了将 JPEG 图像转换为一系列可无线传输的数据包的逻辑，来自 [fsphil ssdv](https://github.com/fsphil/ssdv/)  
 - `/rs8.c` & `/rs8.h`: Reed-Solomon 前向错误校验库，为 SSDV 数据包提供容错能力，来自 [fsphil ssdv](https://github.com/fsphil/ssdv/)  
-- `/Balloon_PCB_Ver1.0.1.epro`: 气球的电路设计，使用立创 EDA 绘制  
+- `/Balloon_PCB_Ver_1.0.3.zip`: 气球端的电路设计，PCB制版文件、预览图片及其3D模型。使用立创 EDA 绘制  
 
-2. **⚙️ [CDUT | 可配置数传单元](./CDUT)**  
+2. **⚙️ [CDTU | 可配置数传单元](./CDTU)**  
 基于 RP2040-Zero 的智能数传模块控制器。  
 
 - `/main.py`: 运行在 RP2040-Zero 上的核心程序。它将普通的 HC-12 数传模块升级为一个智能可配置的数传单元，实现了：  
@@ -50,13 +50,13 @@
   - 自动模式切换：通过硬件引脚控制模块在数据模式和命令模式间无缝切换  
   - 透明数据桥接：在默认模式下作为完全透明的数据传输桥  
 
-- `CDUT_PCB_Ver_0.0.1.epro`: CDUT 的电路设计，使用立创 EDA 绘制  
+- `CDTU_PCB_Ver_1.0.1.zip`: CDTU 的电路设计，PCB制版文件、预览图片及其3D模型。使用立创 EDA 绘制  
 
 3. **📡 [Ground Station | 地面站](./Ground%20Station)**  
 功能强大的图形化地面站软件，是数据接收、状态监控和任务执行的控制中心。  
 
 - `/GUI.py`: 基于 PyQt6 的地面站图形化主程序。 它负责：  
-  - 连接、管理和控制测控用收发信机 CDUT  
+  - 连接、管理和控制测控用收发信机 CDTU  
   - 连接、管理和控制追踪气球的旋转器  
   - 气球的控制与状态监测  
   - 解析遥测、SSDV 图像数据和中继通信数据  
