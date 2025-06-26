@@ -8,8 +8,8 @@ It provides Transparent Data Bridge, Runtime AT Command Control,
 Persistent Configuration and Automatic Mode Switching.
 
 Author: BG7ZDQ
-Date: 2025/06/12 
-Version: 0.0.1 
+Date: 2025/06/26 
+Version: 0.0.2 
 LICENSE: GNU General Public License v3.0
 """
 
@@ -21,6 +21,7 @@ from machine import UART, Pin
 
 """ 参数定义 """
 # 允许的波特率与信道号
+# 此处挑选效率最高的选项，同时确保处于业余无线电频段
 VALID_BAUD = {2400, 9600, 38400, 115200}
 VALID_CHAN = {f"{i:03d}" for i in range(1, 17)}
 
@@ -30,10 +31,15 @@ AT_MODE_EXIT_DELAY_S = 0.1    # 退出AT模式后模块重启时间
 AT_CMD_INTERVAL_S = 0.1       # 发送AT指令后所需等待时间
 
 # 硬件引脚定义
-XCVR_SET_PIN = Pin(6, Pin.OUT)
+CTRL_PIN = Pin(6, Pin.OUT)
 UART_TX_PIN = Pin(4)
 UART_RX_PIN = Pin(5)
 UART_ID = 1
+
+# LED 颜色定义 (R, G, B)
+COLOR_STANDBY = (16, 0, 0)  # 待机 - 红色
+COLOR_USB_RX = (0, 16, 0)   # 收到上位机(USB)数据 - 绿色
+COLOR_UART_RX = (0, 0, 16)  # 收到串口(无线模块)数据 - 蓝色
 
 # 配置文件名
 CONFIG_FILE = "config.ini"
@@ -47,6 +53,40 @@ current_baud_rate = 0
 # 运行状态
 state = True
 
+
+""" LED 状态控制器定义 """
+class StatusLED:
+    def __init__(self, pin, flash_duration_ms=10):
+        self.np = neopixel.NeoPixel(Pin(pin), 1)
+        self.flash_duration_ms = flash_duration_ms
+        
+        # 记录上次颜色改变的时间戳
+        self.last_change_time = 0
+        self.is_flashing = False
+
+        # 设置初始待机颜色
+        self.set_color(COLOR_STANDBY)
+
+    def set_color(self, color):
+        """直接设置LED颜色"""
+        self.np[0] = color
+        self.np.write()
+
+    def trigger_flash(self, flash_color):
+        """触发一次指定颜色的闪烁"""
+        self.set_color(flash_color)
+        self.last_change_time = time.ticks_ms()
+        self.is_flashing = True
+
+    def update(self):
+        """在主循环中不断调用此方法来更新LED状态"""
+        # 仅当LED处于闪烁状态时才需要检查
+        if self.is_flashing:
+            # 如果距离上次闪烁已经超过了设定的时间
+            if time.ticks_diff(time.ticks_ms(), self.last_change_time) > self.flash_duration_ms:
+                self.set_color(COLOR_STANDBY)
+                self.is_flashing = False
+                
 """ 函数定义 """
 # 验证波特率是否有效
 def is_valid_baud(baud):
@@ -142,7 +182,11 @@ def update_config(baud=None, chan=None):
 
 # 初始化/重新初始化 UART
 def init_uart(baud):
-    return UART(UART_ID, baudrate=baud, tx=UART_TX_PIN, rx=UART_RX_PIN, rxbuf=256)
+    try:
+        return UART(UART_ID, baudrate=baud, tx=UART_TX_PIN, rx=UART_RX_PIN, rxbuf=256)
+    except Exception as e:
+        usb_log(f"** [错误] 初始化 UART 时出错: {e} **\n")
+        return None
 
 # 向USB串口写入原始二进制数据
 def usb_raw(data):
@@ -160,12 +204,12 @@ def usb_log(message):
 
 # 进入AT指令模式
 def enter_at_mode():
-    XCVR_SET_PIN.value(0)
+    CTRL_PIN.value(0)
     time.sleep(AT_MODE_ENTRY_DELAY_S)
 
 # 退出AT指令模式
 def exit_at_mode():
-    XCVR_SET_PIN.value(1)
+    CTRL_PIN.value(1)
     time.sleep(AT_MODE_EXIT_DELAY_S)
 
 # 发送AT指令并读取响应
@@ -186,6 +230,7 @@ def send_at_command(uart, cmd, response_timeout=300, silent=False):
     if not silent and response.strip():
         display_response = response.strip().replace(b'\r\n', b' ').replace(b'\n', b' ')
         usb_log(f"** {display_response} **\n")
+
     return response
 
 # 探测 AT 模式的正确波特率
@@ -196,15 +241,17 @@ def find_at_baud_rate(last_known_baud,silent=False):
     
     # 尝试进行探测
     for baud in baud_rates_to_try:
-        usb_log(f"** [调试] 尝试以 {baud} bps 建立 AT 通信 **") if not silent else None
         uart = init_uart(baud)
-        response = send_at_command(uart, "AT\r\n", response_timeout=200, silent=True)
-        # 当收到 OK 时判定成功建立连接
-        if response.strip().endswith(b'OK'):
-            usb_log(f"** [调试] 成功以 {baud} bps 建立 AT 通信 **") if not silent else None
-            return uart
-        if uart:
-            uart.deinit()
+        
+        # 首先确保 uart 对象被成功创建
+        if uart: 
+            response = send_at_command(uart, "AT\r\n", response_timeout=200, silent=True)
+            
+            # 然后判断 response 是否有效且正确
+            if response and response.strip().endswith(b'OK'):
+                return uart  # 成功，直接返回，不关闭串口
+            else:
+                uart.deinit() # 失败，关闭这个没用的串口，继续下一次循环
 
     # 如果所有尝试都失败了
     usb_log("** [错误] 无法与模块建立AT通信 **")
@@ -249,7 +296,7 @@ def parse_usb_command(cmd_bytes):
             return "control", "exit", None
         
         # 处理查询指令
-        elif clean_text.startswith(("AT+R", "AT+V", "AT+FU", "AT+P")):
+        elif clean_text.startswith(("AT+R")):
             return "query", clean_text, None
         
         # 处理其他非配置的AT指令
@@ -292,7 +339,9 @@ def execute_at_command(cmd_bytes, uart_obj):
             response = send_at_command(at_uart, f"AT+C{value}\r\n")
         
         # 销毁临时uart对象
-        at_uart.deinit()
+        if at_uart:
+            at_uart.deinit()
+            
         exit_at_mode()
 
         # 更新配置信息
@@ -313,8 +362,12 @@ def execute_at_command(cmd_bytes, uart_obj):
         exit_at_mode()
 
         # 销毁临时uart对象
-        at_uart.deinit()
-        return uart_obj
+        if at_uart:
+            at_uart.deinit()
+        
+        # 重新初始化主串口，并返回新的对象
+        new_uart = init_uart(current_baud_rate)
+        return new_uart
 
     # 其他类型信息
     else:
@@ -339,9 +392,10 @@ def usb_readline_bytes(maxlen=256):
 
 """ 上电初始化 """
 # 工作指示灯
-np = neopixel.NeoPixel(Pin(16), 1)
-np[0] = (16, 0, 0)
-np.write()
+led = StatusLED(pin = 16)
+
+# 留出给设备管理器识别的空当
+time.sleep(2)
 
 # 读取配置，了解模块上次运行的状态
 target_baud, target_chan = read_config()
@@ -351,18 +405,19 @@ current_baud_rate = target_baud
 enter_at_mode()
 
 # 自动探测并找到正确的AT通信波特率，返回一个可用的 uart 对象
-serial = find_at_baud_rate(target_baud,True)
+at_serial = find_at_baud_rate(target_baud,True)
 
 # 使用探测成功的 uart 对象来发送配置指令
 usb_log(f"** [调试] 波特率将设置为 {target_baud} **\n")
-send_at_command(serial, f"AT+B{target_baud}\r\n")
+send_at_command(at_serial, f"AT+B{target_baud}\r\n")
 usb_log(f"** [调试] 信道号将设置为 {target_chan} **\n")
-send_at_command(serial, f"AT+C{target_chan}\r\n")
+send_at_command(at_serial, f"AT+C{target_chan}\r\n")
 usb_log("** [调试] 读取最终设置... **\n")
-send_at_command(serial, "AT+RX\r\n")
+send_at_command(at_serial, "AT+RX\r\n")
 
 # 退出 AT 模式
 exit_at_mode()
+at_serial.deinit()
 
 # 初始化用于透明传输的串口，并更新全局波特率变量
 serial = init_uart(target_baud)
@@ -384,12 +439,16 @@ while state:
                 n = serial.readinto(buf)
                 if n is not None and n > 0:
                     usb_raw(buf[:n])
+                    # 更新指示灯状态
+                    led.trigger_flash(COLOR_UART_RX)
         except Exception as e:
             usb_log(f"** [错误] 处理来自无线模块的数据时发生错误：{repr(e)} **\n")
 
         # 然后处理来自USB的数据
         usb_line = usb_readline_bytes()
         if usb_line:
+            # 更新指示灯状态
+            led.trigger_flash(COLOR_USB_RX)
             # 检查是否为AT指令
             if usb_line.strip().upper().startswith(b'AT+'):
                 # 调用修改后的AT指令处理函数
@@ -407,9 +466,14 @@ while state:
     except Exception as e:
         usb_log(f"** [错误] 轮询逻辑发生错误：{e} **")
         time.sleep(1)
+        
+    # 更新 LED 状态
+    led.update()
 
 """ 程序退出清理 """
-serial.deinit()
+if serial:
+    serial.deinit()
 poll.unregister(sys.stdin)
-XCVR_SET_PIN.value(1)
+CTRL_PIN.value(1)
+led.set_color((0,0,0))
 usb_log("** [提示] 程序终止 **")
