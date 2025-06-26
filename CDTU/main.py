@@ -8,7 +8,7 @@ It provides Transparent Data Bridge, Runtime AT Command Control,
 Persistent Configuration and Automatic Mode Switching.
 
 Author: BG7ZDQ
-Date: 2025/06/26 
+Date: 2025/06/27 
 Version: 0.0.2 
 LICENSE: GNU General Public License v3.0
 """
@@ -126,15 +126,15 @@ def read_config():
     # 处理文件不存在或内容无效的情况
     except (OSError, ValueError) as e:
         if isinstance(e, OSError):
-            usb_log("** [注意] 配置文件未找到，将使用默认配置 **")
+            usb_log("** [注意] 配置文件未找到，将使用默认配置 **\n")
         else:
-            usb_log("** [错误] 配置文件值无效，将使用默认配置 **")
+            usb_log("** [错误] 配置文件值无效，将使用默认配置 **\n")
         
         update_config(default_baud, default_chan)
         return default_baud, default_chan
     # 处理其他异常错误
     except Exception as e:
-        usb_log(f"** [错误] 配置文件读取异常，将使用默认配置: {e} **")
+        usb_log(f"** [错误] 配置文件读取异常，将使用默认配置: {e} **\n")
         return default_baud, default_chan
 
 # 更新 config.ini 文件
@@ -177,7 +177,7 @@ def update_config(baud=None, chan=None):
             for k, v in config.items():
                 f.write(f"{k}={v}\n")
     except OSError as e:
-        usb_log(f"** [错误] 配置文件更新失败: {e} **")
+        usb_log(f"** [错误] 配置文件更新失败: {e} **\n")
 
 
 # 初始化/重新初始化 UART
@@ -193,7 +193,7 @@ def usb_raw(data):
     if isinstance(data, bytearray):
         data = bytes(data)
     elif not isinstance(data, bytes):
-        raise TypeError("** [错误] RAW 函数需要字节或字节数组 **")
+        raise TypeError("** [错误] RAW 函数需要字节或字节数组 **\n")
     sys.stdout.buffer.write(data)
 
 # 向USB串口写入 UTF-8 编码的调试或提示信息
@@ -254,7 +254,7 @@ def find_at_baud_rate(last_known_baud,silent=False):
                 uart.deinit() # 失败，关闭这个没用的串口，继续下一次循环
 
     # 如果所有尝试都失败了
-    usb_log("** [错误] 无法与模块建立AT通信 **")
+    usb_log("** [错误] 无法与模块建立AT通信 **\n")
     return init_uart(POWER_ON_AT_MODE_BAUD_RATE)
 
 # 解析来自USB的AT指令并更新配置
@@ -264,7 +264,7 @@ def parse_usb_command(cmd_bytes):
         try:
             text = cmd_bytes.decode("ASCII")
         except UnicodeDecodeError:
-            usb_log("** [错误] 解码失败：指令包含非 ASCII 字符 **")
+            usb_log("** [错误] 解码失败：指令包含非 ASCII 字符 **\n")
             return "error", None, None
 
         # 去除字符串两端的非预期字符
@@ -278,7 +278,7 @@ def parse_usb_command(cmd_bytes):
             if is_valid_baud(baud):
                 return "config", "baud", baud
             else:
-                usb_log(f"** [错误] 波特率无效: {baud} **")
+                usb_log(f"** [错误] 波特率无效: {baud} **\n")
                 return "error", "InvalidBaud", baud
 
         # 处理信道指令
@@ -288,7 +288,7 @@ def parse_usb_command(cmd_bytes):
             if is_valid_chan(val_str):
                 return "config", "chan", val_str
             else:
-                usb_log(f"** [错误] 信道号无效: {val_str} **")
+                usb_log(f"** [错误] 信道号无效: {val_str} **\n")
                 return "error", "InvalidChannel", val_str
                 
         # 处理退出指令
@@ -301,7 +301,7 @@ def parse_usb_command(cmd_bytes):
         
         # 处理其他非配置的AT指令
         else:
-            usb_log(f"** [注意] 未知指令: {clean_text} **")
+            usb_log(f"** [注意] 未知指令: {clean_text} **\n")
             return "unknown", clean_text, None
 
     # 格式错误异常处理
@@ -320,13 +320,13 @@ def execute_at_command(cmd_bytes, uart_obj):
 
     # 如果解析发生错误
     if cmd_type == "error":
-        usb_log(f"** [错误] 指令处理失败：{param} - {value}**")
+        usb_log(f"** [错误] 指令处理失败：{param} - {value}**\n")
         return uart_obj
 
     # 如果收到退出指令
     elif cmd_type == "control" and param == "exit":
         state = False
-        usb_log("** [注意] 收发信机受控退出运行 **")
+        usb_log("** [注意] 收发信机受控退出运行 **\n")
         return uart_obj
 
     # 如果收到配置指令
@@ -347,7 +347,7 @@ def execute_at_command(cmd_bytes, uart_obj):
         # 更新配置信息
         if b"OK" in response:
             update_config(**{param: value})
-            usb_log(f"** [注意] 参数 {param} 已设置为 {value} **")
+            usb_log(f"** [注意] 参数 {param} 已设置为 {value} **\n")
             current_baud_rate = value if param == "baud" else current_baud_rate
 
         # 重载 UART 配置
@@ -458,13 +458,13 @@ while state:
                 try:
                     serial.write(usb_line)
                 except Exception as e:
-                    usb_log(f"** [错误] 转发时发生错误：{e} **")
+                    usb_log(f"** [错误] 转发时发生错误：{e} **\n")
 
     # 其他情况处理
     except KeyboardInterrupt:
         break
     except Exception as e:
-        usb_log(f"** [错误] 轮询逻辑发生错误：{e} **")
+        usb_log(f"** [错误] 轮询逻辑发生错误：{e} **\n")
         time.sleep(1)
         
     # 更新 LED 状态
@@ -476,4 +476,4 @@ if serial:
 poll.unregister(sys.stdin)
 CTRL_PIN.value(1)
 led.set_color((0,0,0))
-usb_log("** [提示] 程序终止 **")
+usb_log("** [提示] 程序终止 **\n")
