@@ -9,8 +9,8 @@
  * This firmware provides a complete flight control and data acquisition solution for HAB missions.
  *
  * Author: BG7ZDQ
- * Date: 2025/06/17
- * Version: 1.0.0
+ * Date: 2025/06/27
+ * Version: 1.0.1
  * LICENSE: GNU General Public License v3.0
  */
 
@@ -428,10 +428,8 @@ void V_Datalink_Task(void *pvParameters) {
       // 更新标志位
       task_did_work = true;
 
-      // 短暂延时，等待收发信机稳定
-      vTaskDelay(pdMS_TO_TICKS(5));
+      // 从队列中获取数据包并写入串口
       Serial.write(txPacket.data, txPacket.length);
-
     }
 
     // 然后看看串口是否有数据，处理接收和分发
@@ -1155,6 +1153,11 @@ void V_SSDV_Task(void *pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(200)); 
         esp_task_wdt_reset();
     }
+
+    // 增加一个额外的延时，以确保物理串口的硬件发送缓冲区有足够的时间将最后一个数据包完全发出。
+    // 对于 9600 波特率，发送一个 256 字节的数据包大约需要 256 * 10 / 9600 ≈ 267ms。
+    // 因此，一个 300ms 到 500ms 的延时是比较安全的。
+    vTaskDelay(pdMS_TO_TICKS(500)); 
 
     // 图像编码并发送完成，发送结束标识，并附带图像编号
     Transmit_Status(SSDV_ENCODE_END, ssdvImageId - 1);
