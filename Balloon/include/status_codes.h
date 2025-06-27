@@ -25,6 +25,7 @@ typedef enum {
     SYS_RESTARTING           = 0x1003, // 系统将受控重启
     SYS_DEV_MODE_ENABLED     = 0x1004, // 处于开发者模式
     RELAY_RATE_LIMITED       = 0x1005, // 中继功能已限流
+    SPIFFS_MOUNT_FAIL        = 0x1006, // SPIFFS 挂载失败
 
     // --- 摄像头模块状态码 (0x20xx) ---
     CAM_INIT_START           = 0x2000, // 相机初始化开始
@@ -33,7 +34,7 @@ typedef enum {
     CAM_CALIBRATE_START      = 0x2003, // 相机开始校准
     CAM_CALIBRATE_OK         = 0x2004, // 相机校准成功
     CAM_CALIBRATE_FAIL       = 0x2005, // 相机校准失败
-    CAM_CAPTURE_FAIL         = 0x2006, // 图像拍摄失败
+    CAM_CAPTURE_FAIL         = 0x2006, // 图像获取失败
     CAM_RECONFIG_OK          = 0x2007, // 相机配置成功
     CAM_RECONFIG_FAIL        = 0x2008, // 相机配置失败
     CAM_RESTORE_DEFAULT_OK   = 0x2009, // 相机参数重置
@@ -63,6 +64,8 @@ typedef enum {
     CMD_NACK_SET_CAM_QUAL_LOW= 0x5009, // 图像质量过高
     CMD_NACK_SET_SSDV_QUAL   = 0x500A, // 编码质量无效
     CMD_NACK_SET_SSDV_CYCLE  = 0x500B, // 图传周期无效
+    CMD_NACK_SET_SSDV_TYPE   = 0x5016, // 图传模式无效
+    CMD_NACK_SET_SSDV_PRESET = 0x5017, // 图传预设无效
     
     // 控制 (CTL) 命令应答 (ACK)
     CMD_ACK_RELAY_ON         = 0x500C, // 中继功能已开启
@@ -76,6 +79,7 @@ typedef enum {
     CMD_ACK_SSDV_CYCLE       = 0x5012, // 图传周期已设置
     CMD_ACK_CAM_SIZE         = 0x5013, // 图像尺寸已设置
     CMD_ACK_CAM_QUALITY      = 0x5014, // 图像质量已设置
+    CMD_ACK_SSDV_PRESET      = 0x5015, // 图传预设已设置
 
     // 查询 (GET) 命令应答 (ACK)
     CMD_ACK_GET_RELAY_STATUS    = 0x5100, // 中继状态
@@ -87,7 +91,7 @@ typedef enum {
     CMD_ACK_GET_CAM_QUALITY     = 0x5106, // 图像质量
 
     // --- 传感器模块状态码 (0x60xx) ---
-    ADC_SAMPLE_FAIL          = 0x6000, // ADC电压采样连续失败。Payload: esp_err_t
+    ADC_SAMPLE_FAIL             = 0x6000, // ADC 采样失败
 
 } StatusCode_t;
 

@@ -30,6 +30,7 @@
 
 // ESP-IDF 底层驱动和库
 #include <WiFi.h>
+#include <SPIFFS.h>
 #include <driver/adc.h>
 
 #include <esp_camera.h>
@@ -109,6 +110,7 @@ typedef struct {
   uint8_t     ssdvPacketType;       // SSDV 数据类型
   int         ssdvEncodingQuality;  // SSDV 编码质量
   int         ssdvCycleTimeSec;     // SSDV 发送周期
+  int         ssdvPresetMode;       // SSDV 预设图片功能
 } SystemConfig_t;
 
 // 声明系统实时运行状态结构体

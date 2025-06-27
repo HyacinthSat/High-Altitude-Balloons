@@ -31,7 +31,8 @@ SystemConfig_t g_systemConfig = {
   .cameraImageQuality  = 5,                // 默认摄像机图像质量: 5
   .ssdvPacketType      = SSDV_TYPE_NOFEC,  // 默认 SSDV 数据类型: NOFEC
   .ssdvEncodingQuality = 2,                // 默认 SSDV 编码质量: 2
-  .ssdvCycleTimeSec    = 60                // 默认 SSDV 发送周期: 60
+  .ssdvCycleTimeSec    = 60,               // 默认 SSDV 发送周期: 60
+  .ssdvPresetMode   = 0,                // 默认 SSDV 预设照片: 0 (无预设)
 };
 
 // 定义并初始化系统实时状态变量
@@ -98,9 +99,9 @@ void Update_System_Config(const SystemConfig_t* new_config) {
 }
 
 // 线程安全地获取当前系统实时状态变量的完整副本
-void GET_System_Status(SystemStatus_t* status_copy) {
+void GET_System_Status(SystemStatus_t* new_status) {
   if (xSemaphoreTake(g_stateMutex, portMAX_DELAY) == pdTRUE) {
-    memcpy(status_copy, &g_systemStatus, sizeof(SystemStatus_t));
+    memcpy(new_status, &g_systemStatus, sizeof(SystemStatus_t));
     xSemaphoreGive(g_stateMutex);
   }
 }
@@ -266,6 +267,15 @@ void Initialization_Check() {
   // 开发者模式指示
   if (DEBUG_MODE){
     Transmit_Status(SYS_DEV_MODE_ENABLED);
+  }
+}
+
+// 尝试挂载 SPIFFS 文件系统
+void Setup_SPIFFS() {
+  // 检查 SPIFFS 是否成功挂载
+  if(!SPIFFS.begin(true)){
+    Transmit_Status(SPIFFS_MOUNT_FAIL, "SPIFFS Mount Failed");
+    Signal_Error();
   }
 }
 
@@ -503,7 +513,7 @@ void V_Datalink_Task(void *pvParameters) {
 void Create_Datalink_Task() {
 
   // 初始化数据链路层各队列
-  txQueue = xQueueCreate(120, sizeof(RadioPacket_t));
+  txQueue = xQueueCreate(60, sizeof(RadioPacket_t));
   cmdQueue = xQueueCreate(10, MAX_RX_BUFF_SIZE);
   relayQueue = xQueueCreate(10, MAX_RX_BUFF_SIZE);
 
@@ -708,7 +718,7 @@ static void Handle_SET_Command(const char *target, const char *value) {
   }
 
   // 处理所有 SSDV 相关设置命令 (SSDV_TYPE, SSDV_QUALITY, SSDV_CYCLE)
-  else if (strcmp(target, "SSDV_TYPE") == 0 || strcmp(target, "SSDV_QUALITY") == 0 || strcmp(target, "SSDV_CYCLE") == 0) {
+  else if (strcmp(target, "SSDV_TYPE") == 0 || strcmp(target, "SSDV_QUALITY") == 0 || strcmp(target, "SSDV_CYCLE") == 0 || strcmp(target, "SSDV_PRESET") == 0) {
     
     // 声明配置变更状态，获取当前配置的副本
     bool config_changed = false;
@@ -730,6 +740,9 @@ static void Handle_SET_Command(const char *target, const char *value) {
         temp_config.ssdvPacketType = SSDV_TYPE_NOFEC;
         config_changed = true;
         Transmit_Status(CMD_ACK_SSDV_TYPE, SSDV_TYPE_NOFEC);
+      }
+      else {
+        Transmit_Status(CMD_NACK_SET_SSDV_TYPE);
       }
     }
 
@@ -758,6 +771,19 @@ static void Handle_SET_Command(const char *target, const char *value) {
         Transmit_Status(CMD_ACK_SSDV_CYCLE, cycletime);
       } else {
         Transmit_Status(CMD_NACK_SET_SSDV_CYCLE);
+      }
+    }
+
+    else if (strcmp(target, "SSDV_PRESET") == 0) {
+      int preset = atoi(value);
+
+      // 合法性校验
+      if (preset > 0 && preset <= 2) {
+        temp_config.ssdvPresetMode = preset;
+        config_changed = true;
+        Transmit_Status(CMD_ACK_SSDV_PRESET, preset);
+      } else {
+        Transmit_Status(CMD_NACK_SET_SSDV_PRESET);
       }
     }
 
@@ -1104,6 +1130,66 @@ void Process_SSDV_Packet(camera_fb_t *fb, const SystemConfig_t* local_config) {
   }
 }
 
+// 相机模式：直接从摄像头获取图像帧
+void SSDV_Camera_Mode(const SystemConfig_t* local_config) {
+  xSemaphoreTake(cameraMutex, portMAX_DELAY);
+  // 获取图像帧缓冲区
+  camera_fb_t *fb = NULL;
+  fb = esp_camera_fb_get();
+
+  // 检查图像是否成功获取
+  if (fb && fb->buf && fb->len > 0) {
+    Process_SSDV_Packet(fb, local_config);
+  } else {
+    Transmit_Status(CAM_CAPTURE_FAIL);
+    Signal_Error();
+  }
+
+  // 确保释放摄像头资源
+  if (fb) esp_camera_fb_return(fb);
+  xSemaphoreGive(cameraMutex);
+}
+
+// 预设模式：从 SPIFFS 文件系统读取预存图像
+void SSDV_Preset_Mode(uint8_t preset_mode ,SystemConfig_t* local_config) {
+
+  // 拼接文件名
+  char filename[32];
+  snprintf(filename, sizeof(filename), "/preset_%d.jpg", preset_mode);
+
+  // 确保文件成功打开
+  File file = SPIFFS.open(filename, "r");
+  if (!file || file.size() == 0) {
+    Transmit_Status(CAM_CAPTURE_FAIL, "404");
+    if (file) {
+        file.close();
+    }
+    return;
+  }
+  
+  // 读取文件然后送入 SSDV 编码器
+  uint8_t *img_buf = (uint8_t *)malloc(file.size());
+    
+  if (!img_buf) {
+    Transmit_Status(CAM_CAPTURE_FAIL, 403);
+  } else {
+
+    // 将文件内容读入内存，在栈上创建一个临时的 camera_fb_t 结构体并填充
+    file.read(img_buf, file.size());
+    camera_fb_t preset_fb;
+    preset_fb.buf = img_buf;
+    preset_fb.len = file.size();
+
+    // 调用 SSDV 编码函数
+    Process_SSDV_Packet(&preset_fb, local_config);
+
+    // 释放为图像数据分配的内存，防止泄漏
+    free(img_buf);
+  }
+  // 关闭文件
+  file.close();
+}
+
 // 图像回传层任务 (P2 - 较低优先级)
 void V_SSDV_Task(void *pvParameters) {
 
@@ -1120,7 +1206,9 @@ void V_SSDV_Task(void *pvParameters) {
 
     // 获取当前系统状态的本地副本
     SystemStatus_t local_status;
+    SystemConfig_t local_config;
     GET_System_Status(&local_status);
+    GET_System_Config(&local_config);
 
     // 检查任务启用状态
     if (!local_status.isSsdvEnabled) {
@@ -1132,30 +1220,13 @@ void V_SSDV_Task(void *pvParameters) {
     Update_System_Status(SSDV_TRANSMITTING_STATUS, true);
     Transmit_Status(SSDV_ENCODE_START, ssdvImageId);
 
-    // 在摄像头硬件资源互斥锁的保护下进行拍摄
-    xSemaphoreTake(cameraMutex, portMAX_DELAY);
-
-    // 正式进行拍摄，并进行错误处理
-    fb = esp_camera_fb_get();
-    if (!fb || !fb->buf || fb->len == 0) {
-      Transmit_Status(CAM_CAPTURE_FAIL);
-      if (fb) esp_camera_fb_return(fb);
-      xSemaphoreGive(cameraMutex);
-      Signal_Error();
-      continue;
+    // 根据预设模式选择图像源
+    uint8_t preset_mode = local_config.ssdvPresetMode;
+    if (preset_mode >= 1 && preset_mode <= 3) {
+      SSDV_Preset_Mode(preset_mode, &local_config);
+    } else {
+      SSDV_Camera_Mode(&local_config);
     }
-
-    // 对拍摄的图像进行 SSDV 编码
-    SystemConfig_t local_config;
-    GET_System_Config(&local_config);
-    Process_SSDV_Packet(fb, &local_config);
-
-    // 释放摄像头帧缓冲区
-    esp_camera_fb_return(fb);
-    fb = NULL;
-
-    // 释放摄像头硬件资源互斥锁
-    xSemaphoreGive(cameraMutex);
 
     // 然后等待发送队列被完全清空
     while (uxQueueMessagesWaiting(txQueue) > 0) {
@@ -1173,6 +1244,11 @@ void V_SSDV_Task(void *pvParameters) {
 
     // 修改 SSDV 发送状态至 False，允许 SET/CTL 命令的执行。
     Update_System_Status(SSDV_TRANSMITTING_STATUS, false);
+
+    // 重置 SSDV 预设模式至默认值 0
+    GET_System_Config(&local_config);
+    local_config.ssdvPresetMode = 0;
+    Update_System_Config(&local_config);
 
     // 降频节电
     setCpuFrequencyMhz(80);
@@ -1206,7 +1282,7 @@ void Create_SSDV_Task() {
 void V_Relay_Task(void *pvParameters) {
 
   // 中继帧缓冲区
-  char relay_buffer[256];
+  char relay_buffer[MAX_RX_BUFF_SIZE];
   int relay_len = 0;
 
   // 防滥用机制，每两分钟重置一次计数
@@ -1240,7 +1316,23 @@ void V_Relay_Task(void *pvParameters) {
 
     // 从中继队列等待消息
     if (xQueueReceive(relayQueue, relay_buffer, pdMS_TO_TICKS(1000))) {
-      // 收到完整的中继数据，直接构造转发帧
+      
+      // 收到完整的中继数据，进行文本清洗
+      char *read_ptr = relay_buffer;
+      char *write_ptr = relay_buffer;
+      while (*read_ptr) {
+        // 只保留不是 \n 和 \r 的字符
+        if (*read_ptr != '\n' && *read_ptr != '\r') {
+          *write_ptr = *read_ptr;
+          write_ptr++;
+        }
+        read_ptr++;
+      }
+
+      // 在新字符串的末尾添加空终止符
+      *write_ptr = '\0';
+
+      // 检查是否到达限制，若未到达直接转发数据
       if (relay_count_since_reset < 80) {
         Transmit_Text("##RELAY,%s", relay_buffer);
         relay_count_since_reset++;
@@ -1276,6 +1368,7 @@ void setup() {
   digitalWrite(BUZZER, LOW);                   // 初始化为低电平
   Serial.begin(9600);                          // 设置主串口波特率
   GPS_Serial.begin(9600, SERIAL_8N1, 15, -1);  // 设置 GPS 串口
+  Setup_SPIFFS();                              // 挂载 SPIFFS
   WiFi.mode(WIFI_OFF);                         // 关闭 Wi-Fi
   btStop();                                    // 关闭 蓝牙
   Initialize_Watchdog();                       // 启动看门狗

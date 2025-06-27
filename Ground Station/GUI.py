@@ -125,7 +125,7 @@ class GUI(QWidget):
             0x2003: ("[正常] 相机开始校准"  , "camera", pending),
             0x2004: ("[正常] 相机校准成功"  , "camera", success),
             0x2005: ("[错误] 相机校准失败"  , "camera", failure),
-            0x2006: ("[警告] 图像拍摄失败"  , "camera", failure),
+            0x2006: ("[警告] 图像获取失败"  , "camera", failure),
             0x2007: ("[正常] 相机配置成功"  , "camera", success),
             0x2008: ("[警告] 相机配置失败"  , "camera", failure),
             0x2009: ("[注意] 相机参数重置"  , "camera", success),
@@ -155,6 +155,8 @@ class GUI(QWidget):
             0x5009: ("[拒绝] 图像质量过高", None, None),
             0x500A: ("[拒绝] 编码质量无效", None, None),
             0x500B: ("[拒绝] 图传周期无效", None, None),
+            0x5016: ("[拒绝] 图传模式无效", None, None),
+            0x5017: ("[拒绝] 图传预设无效", None, None),
             # CTL ACK
             0x500C: ("[应答] 中继功能已开启", None, None),
             0x500D: ("[应答] 中继功能已关闭", None, None),
@@ -166,6 +168,7 @@ class GUI(QWidget):
             0x5012: ("[应答] 图传周期已设置", None, None),
             0x5013: ("[应答] 图像尺寸已设置", None, None),
             0x5014: ("[应答] 图像质量已设置", None, None),
+            0x5015: ("[应答] 图传预设已设置", None, None),
             # GET ACK
             0x5100: ("[查询] 中继状态", None, None),
             0x5101: ("[查询] 图传状态", None, None),
@@ -862,7 +865,7 @@ class GUI(QWidget):
             if self.Radio_Serial_Thread:
                 self.Radio_Serial_Thread.stop()
 
-            # 手动断开时，也应该确保UI状态正确更新
+            # 手动断开时，也应该确保 UI 状态正确更新
             self.Radio_COM_status.setPixmap(standby)
             self.Radio_COM_button.setText("连接")
 
@@ -881,10 +884,11 @@ class GUI(QWidget):
     def Radio_Disconnected(self):
         self.Radio_COM_status.setPixmap(warning)
         self.Radio_COM_button.setText("连接")
+        self.debug_info("接收机串口已断开")
+        QMessageBox.warning(self, "警告：串口意外断开", "接收机串口已断开，请检查连接。")
         if self.Radio_Serial_Thread:
             self.Radio_Serial_Thread.stop()
             self.Radio_Serial_Thread = None
-        self.debug_info("接收机串口已断开")
 
     # 发送数据到收发信机串口
     def Send_Data_to_Radio(self, data_to_send: str):
@@ -1100,8 +1104,8 @@ class GUI(QWidget):
         # CAM_INIT_FAIL, CAM_RECONFIG_FAIL, CAM_RESTORE_DEFAULT_FAIL, CAM_CALIBRATE_FAIL
         # CAM_CAPTURE_FAIL, SSDV_ENCODE_ERROR, ADC_SAMPLE_FAIL
         elif status_code in [0x2002, 0x2009, 0x200B, 0x2005, 0x2006,0x4002,0x6000 ]:
-            error_name = self.ESP_ERR_MAP.get(payload, f"未知错误码: {payload}")
-            return f"错误详情: {error_name}"
+            error_name = self.ESP_ERR_MAP.get(payload, f"信息码: {payload}")
+            return {error_name}
              
         # 如果没有匹配的翻译规则，直接返回原始的payload
         else:
@@ -1763,6 +1767,7 @@ class Command_Windows(QWidget):
             ' 设置图传模式 (SET,SSDV_TYPE)'   : ('SET,SSDV_TYPE', True),
             ' 设置图传质量 (SET,SSDV_QUALITY)': ('SET,SSDV_QUALITY', True),
             ' 设置图传周期 (SET,SSDV_CYCLE)'  : ('SET,SSDV_CYCLE', True),
+            ' 设置图传预设 (SET,SSDV_PRESET)' : ('SET,SSDV_PRESET', True),
             ' 设置图像尺寸 (SET,CAM_SIZE)'    : ('SET,CAM_SIZE', True),
             ' 设置图像质量 (SET,CAM_QUALITY)' : ('SET,CAM_QUALITY', True),
             ' 查询中继状态 (GET,RELAY)' : ('GET,RELAY', False),
