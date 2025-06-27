@@ -90,7 +90,7 @@
 #define SSDV_SIZE_NOFEC      256                 // 单个 SSDV 数据包的大小
 
 // 功能参数
-#define CAM_CALIBRATE_TIMES  5                   // 摄像头校准拍摄次数
+#define CAM_CALIBRATE_TIMES  8                   // 摄像头校准拍摄次数
 
 // 电压测量相关参数
 #define VOLTAGE_TEST_R1      10000               // 分压电阻 R1 的阻值

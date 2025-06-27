@@ -321,8 +321,11 @@ bool Setup_Camera() {
 
 // 拍摄多次进行摄像头校准 (自动曝光/白平衡稳定)
 bool Camera_Calibrate() {
-  vTaskDelay(pdMS_TO_TICKS(2000));
+
+  // 通知地面站
   Transmit_Status(CAM_CALIBRATE_START);
+
+  // 拍摄多次进行校准
   for (int i = 0; i < CAM_CALIBRATE_TIMES; i++) {
     camera_fb_t *fb = esp_camera_fb_get();
     if (!fb) {
@@ -330,9 +333,11 @@ bool Camera_Calibrate() {
       Signal_Error(); 
       return false;
     }
-    vTaskDelay(pdMS_TO_TICKS(200));
+    vTaskDelay(pdMS_TO_TICKS(500));
     esp_camera_fb_return(fb);
   }
+
+  // 通知地面站校准成功
   Transmit_Status(CAM_CALIBRATE_OK);
   return true;
 }
@@ -620,14 +625,14 @@ static void Handle_SET_Command(const char *target, const char *value) {
     } cam_modes[] = {
       { "FHD" , FRAMESIZE_FHD  },
       { "SXGA", FRAMESIZE_SXGA },
-      { "SVGA", FRAMESIZE_SVGA },
+      { "XGA" , FRAMESIZE_XGA  },
       { "VGA" , FRAMESIZE_VGA  },
       { "QVGA", FRAMESIZE_QVGA }
     };
 
     // 设置图像尺寸
     if (strcmp(target, "CAM_SIZE") == 0) {
-      // 遍历cam_modes数组，找到与value相等的元素
+      // 遍历 cam_modes 数组，找到与 value 相等的元素
       for (int i = 0; i < sizeof(cam_modes) / sizeof(cam_modes[0]); i++) {
         // 如果找到相等的元素，则将temp_config.cameraImageSize设置为该元素的size，并设置config_changed为true
         if (strcmp(value, cam_modes[i].name) == 0) {
@@ -637,6 +642,10 @@ static void Handle_SET_Command(const char *target, const char *value) {
           Transmit_Status(CMD_ACK_CAM_SIZE, temp_config.cameraImageSize);
           break;
         }
+      }
+      // 如果没有找到相等的元素，则发送 CMD_NACK_INVALID_TYPE 响应
+      if (!config_changed) {
+        Transmit_Status(CMD_NACK_INVALID_TYPE);
       }
     }
 
@@ -1284,7 +1293,7 @@ void setup() {
   Transmit_Status(SYS_INIT_OK);                // 自检指示2
   vTaskDelay(pdMS_TO_TICKS(2000));             // 等待两秒，保证工作稳定
 
-  /* 阶段 4: 创建所有应用任务 */
+  /* 阶段 4: 创建所有其他应用任务 */
   Create_Command_Task();                       // 创建命令解析层任务
   Create_SSDV_Task();                          // 创建图像传输层任务
   Create_Telemetry_Task();                     // 创建基础遥测层任务

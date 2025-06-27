@@ -181,11 +181,11 @@ class GUI(QWidget):
 
         # 翻译枚举定义
         self.CAM_SIZE_MAP = {
-            "14": "FHD (1920x1080)",
+            "14": "FHD  (1920x1080)",
             "12": "SXGA (1280x1024)",
-            "9": "SVGA (800x480)",
-            "8": "VGA (640x480)",
-            "5":  "QVGA (320x240)",
+            "10": "XGA  (1024x768)",
+            "8" : "VGA  (640x480)",
+            "5" : "QVGA (320x240)",
         }
         self.SSDV_TYPE_MAP = {
             "0": "FEC",
@@ -206,11 +206,9 @@ class GUI(QWidget):
             "131074": "ERR_CAMERA_FAILED_TO_SET_FRAME_SIZE",
             "131075": "ERR_CAMERA_FAILED_TO_INIT",
             "131076": "ERR_CAMERA_FAILED_TO_GET_FB",
-            # --- ADC 相关错误码 ---
-            "1": "ADC_SAMPLE_FAIL (ADC采样连续失败)", # 您在 status_codes.h 中定义的，可以复用ESP_FAIL
         }
 
-        # 串口数据缓存区 (接收) 
+        # 定义串口数据缓存区 (接收) 
         self.rx_buffer = bytearray()
 
         # 绘制UI
@@ -850,6 +848,7 @@ class GUI(QWidget):
             self.Radio_Serial_Thread = SerialConnection(port_name, baudrate=9600)
             self.Radio_Serial_Thread.data_received.connect(self.Handle_Radio_Serial_Data)
             self.Radio_Serial_Thread.disconnected.connect(self.Radio_Disconnected)
+            self.Radio_Serial_Thread.connection_failed.connect(self.on_connection_failed)
             self.Radio_Serial_Thread.start()
 
             # 检查是否已经成功连接
@@ -871,6 +870,12 @@ class GUI(QWidget):
             if self.Radio_Serial_Thread:
                  self.Radio_Serial_Thread = None
             self.debug_info("接收机串口已断开")
+
+    # 串口连接失败时的处理
+    def on_connection_failed(self, error_message):
+        self.Radio_COM_status.setPixmap(warning)
+        self.Radio_COM_button.setText("连接")
+        QMessageBox.warning(self, "警告：串口连接失败", error_message)
 
     # 处理收发信机串口意外断开时的情况
     def Radio_Disconnected(self):
@@ -946,20 +951,21 @@ class GUI(QWidget):
             self.Radio_COM_Combo.setCurrentIndex(idx)
         else:
             self.Radio_COM_Combo.setCurrentIndex(0)
-            if Radio_Selected is not None:
+            # 检查收发信机串口是否仍然连接
+            is_connected = self.Radio_Serial_Thread is not None and self.Radio_Serial_Thread.isRunning()
+            if Radio_Selected is not None and is_connected:
                 self.Radio_COM_status.setPixmap(failure)
                 QMessageBox.warning(self, "警告：串口断开", f"收发信机串口 {Radio_Selected} 已断开。")
+                # 如果线程还在，但物理上断开了，应该调用断开函数来清理状态
+                if self.Radio_Serial_Thread:
+                    self.Radio_Serial_Thread.stop()
+                    self.Radio_Disconnected()
     
         # 检查已经连接的旋转器串口是否仍然可用
         Found_Rotator = any(p[0] == Rotator_Selected for p in current_ports)
         if Found_Rotator:
             idx = self.Rotator_COM_Combo.findData(Rotator_Selected)
             self.Rotator_COM_Combo.setCurrentIndex(idx)
-        else:
-            self.Rotator_COM_Combo.setCurrentIndex(0)
-            if Rotator_Selected is not None:
-                self.Rotator_COM_status.setPixmap(failure)
-                QMessageBox.warning(self, "警告：串口断开", f"旋转器串口 {Rotator_Selected} 已断开。")
     
         self.Radio_COM_Combo.blockSignals(False)
         self.Rotator_COM_Combo.blockSignals(False)
@@ -1452,13 +1458,13 @@ class QSO_Windows(QWidget):
         info_layout.addWidget(self.info_table)
 
         # 创建“滚动到底部”按钮，初始时隐藏
-        self.scrollToBottomButton = QPushButton("▼", self.info_frame)
+        self.scrollToBottomButton = QPushButton(" ▼ ", self.info_frame)
         self.scrollToBottomButton.hide() 
         self.scrollToBottomButton.setStyleSheet(common_button_style)
-        self.scrollToBottomButton.setGeometry(440, 290, 20, 20)
+        self.scrollToBottomButton.setGeometry(400, 280, 30, 23)
 
         # 连接点击事件
-        self.scrollToBottomButton.clicked.connect(self.info_table.scrollToBottom)
+        self.scrollToBottomButton.clicked.connect(self.on_scroll_button_clicked)
 
         # 监听滚动条的动作，以便在用户手动滚动时隐藏按钮
         self.info_table.verticalScrollBar().actionTriggered.connect(self.handle_scroll)
@@ -1468,7 +1474,7 @@ class QSO_Windows(QWidget):
 
         # 实时时钟
         self.clock_label = QLabel(self)
-        self.clock_label.setGeometry(510, 150, 250, 60)
+        self.clock_label.setGeometry(490, 150, 250, 60)
         self.clock_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.clock_label.setStyleSheet('color: #3063AB; font-family: 微软雅黑; font: bold 30pt; border: none;')
 
@@ -1523,11 +1529,6 @@ class QSO_Windows(QWidget):
         if not self.TX_button.isEnabled():
             return  # 冷却中，不发送
 
-        # 计数
-        self.tx_count += 1
-        self.tx_count_num.setText(str(self.tx_count))
-        self.tx_count_num.adjustSize()
-
         # 获取目标呼号和消息
         to_call = self.Callsign_input.text().strip().upper()
         msg = self.MSG_input.text().strip()
@@ -1539,6 +1540,11 @@ class QSO_Windows(QWidget):
         elif to_call == self.callsign:
             QMessageBox.warning(self, "输入错误", "不能给自己发送消息。")
             return
+        
+        # 计数
+        self.tx_count += 1
+        self.tx_count_num.setText(str(self.tx_count))
+        self.tx_count_num.adjustSize()
 
         # 当前时间
         current_time = datetime.now().strftime("%H:%M:%S")
@@ -1713,6 +1719,11 @@ class QSO_Windows(QWidget):
         # 如果用户手动滚动到了底部，隐藏提示按钮
         if scrollbar.value() >= scrollbar.maximum() - 5:
             self.scrollToBottomButton.hide()
+
+    def on_scroll_button_clicked(self):
+        # 当用户点击滚动按钮时，自动滚动到表格底部
+        self.info_table.scrollToBottom()
+        self.scrollToBottomButton.hide()
 
     # 经纬度转梅登黑德网格
     def latlng_to_maiden(self, lat, lon):
@@ -1901,6 +1912,7 @@ class SerialConnection(QThread):
     # 发送信号
     data_received = pyqtSignal(bytes)
     disconnected = pyqtSignal()
+    connection_failed = pyqtSignal(str)
 
     def __init__(self, port_name, baudrate=9600):
         super().__init__()
@@ -1918,8 +1930,10 @@ class SerialConnection(QThread):
             self.serial.dtr = False
             self.serial.rts = False
         except serial.SerialException as e:
-            print(f"[错误] 串口打开失败：{e}")
-            self.disconnected.emit()
+            error_message = f"打开串口 {self.port_name} 失败: \n{e}"
+            print(f"[错误] {error_message}")
+            # 发射带错误信息的信号
+            self.connection_failed.emit(error_message)
             return
 
         while self._running:
@@ -1991,22 +2005,31 @@ class SsdvDecoderThread(QThread):
         except Exception as e:
             self.log_message.emit(f"[错误] SSDV解码线程出现未知异常: {e}")
             self.decoding_finished.emit("")
+
 # 主事件
 if __name__ == '__main__':
 
     app = QApplication(sys.argv)
 
+    # 获取程序所在目录
+    base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+
     # 依赖程序检查
-    dependencies = ['./ssdv.exe', './sondehub.exe']
-    missing_files = [f for f in dependencies if not os.path.exists(f)]
+    dependencies = ['ssdv.exe', 'sondehub.exe']
+    missing_files = []
+
+    for dep in dependencies:
+        dep_path = os.path.join(base_dir, dep)
+        if not os.path.exists(dep_path):
+            missing_files.append(dep_path)
 
     if missing_files:
         missing_str = "\n".join(missing_files)
-        QMessageBox.critical(None, "依赖文件缺失", "程序无法启动，缺少关键文件。")
+        QMessageBox.critical(None, "依赖文件缺失", f"程序无法启动，缺少以下关键文件：\n{missing_str}")
         sys.exit(1)
 
     # 启动主窗口
     main_window = GUI()
     main_window.show()
-            
+
 sys.exit(app.exec())
