@@ -26,7 +26,7 @@ from configparser import RawConfigParser
 from PyQt6.QtGui import QIcon, QPixmap, QColor
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtCore import Qt, QUrl, QTimer, QTime, QThread, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QPlainTextEdit, QMessageBox, QComboBox, QLineEdit, QFormLayout, QHeaderView, QTableWidget, QVBoxLayout, QTableWidgetItem, QAbstractItemView, QDialog, QTabWidget, QHBoxLayout
+from PyQt6.QtWidgets import QApplication, QWidget, QLabel, QPushButton, QPlainTextEdit, QMessageBox, QComboBox, QLineEdit, QFormLayout, QHeaderView, QTableWidget, QVBoxLayout, QTableWidgetItem, QAbstractItemView, QDialog, QTabWidget, QHBoxLayout, QFileDialog
 
 # 禁用 GPU 加速
 os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = '--disable-gpu --disable-software-rasterizer'
@@ -144,6 +144,7 @@ class GUI(QWidget):
 
             # --- 指令应答 (0x50xx, 0x51xx) ---
             # NACK
+            0x5000: ("[拒绝] 命令密码错误", None, None),
             0x5001: ("[拒绝] 指令格式错误", None, None),
             0x5002: ("[拒绝] 指令缺少参数", None, None),
             0x5003: ("[拒绝] 指令类型无效", None, None),
@@ -1182,7 +1183,7 @@ class GUI(QWidget):
     def Command(self):
         if self.Radio_Serial_Thread and self.Radio_Serial_Thread.serial and self.Radio_Serial_Thread.serial.is_open:
             if self.Command_window is None:
-                self.Command_window = Command_Windows()
+                self.Command_window = Command_Windows(main_window=self)
                 self.Command_window.tx_message.connect(self.Send_Data_to_Radio)
             self.Command_window.show()
         else:
@@ -1744,10 +1745,13 @@ class Command_Windows(QWidget):
 
     # 定义一个信号，用于发送消息
     tx_message = pyqtSignal(str)
+    
 
     # 定义窗口基本信息
-    def __init__(self):
+    def __init__(self, main_window=None):
         super().__init__()
+
+        self.main_window = main_window
 
         icon = QIcon('UI/logo.ico')
         self.setWindowIcon(icon)
@@ -1756,6 +1760,11 @@ class Command_Windows(QWidget):
         self.setWindowTitle('命令发送')
         self.setStyleSheet('QWidget { background-color: rgb(223,237,249); font-size: 13px; }')
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+
+        # 尝试从配置文件读取密码文件路径
+        self.password = ""
+        self.password_file = config.get("GroundStation", "CommandPasswordFile", fallback="") 
+        self.load_password_from_file()
 
         # 定义可用的命令及其会话框表现
         self.commands = {
@@ -1815,6 +1824,25 @@ class Command_Windows(QWidget):
         self.value_input.setStyleSheet(input_box_style)
         self.value_input.setPlaceholderText(" 请在此输入参数...")
 
+        # 密码文件选择
+        self.pwd_file_input = QLineEdit(self)
+        self.pwd_file_input.setFixedHeight(28)
+        self.pwd_file_input.setStyleSheet(input_box_style)
+        self.pwd_file_input.setReadOnly(True)
+        self.pwd_file_input.setText(os.path.basename(self.password_file) if self.password_file else "")
+        
+        self.select_pwd_file_button = QPushButton("选择", self)
+        self.select_pwd_file_button.setFixedHeight(28)
+        self.select_pwd_file_button.setFixedWidth(50)
+        self.select_pwd_file_button.setStyleSheet(common_button_style)
+        self.select_pwd_file_button.clicked.connect(self.select_password_file)
+
+        # 创建一个水平布局来放置密码文件路径显示和选择按钮
+        pwd_file_layout = QHBoxLayout()
+        pwd_file_layout.addWidget(self.pwd_file_input)
+        pwd_file_layout.addWidget(self.select_pwd_file_button)
+        pwd_file_layout.setSpacing(10)
+
         # 预设命令发送按钮
         send_button = QPushButton("发送", self)
         send_button.setStyleSheet(common_button_style)
@@ -1829,6 +1857,7 @@ class Command_Windows(QWidget):
 
         layout.addRow("选择命令: ", self.cmd_combo)
         layout.addRow("输入参数: ", self.value_input)
+        layout.addRow("密码文件:", pwd_file_layout)
         
         # 为按钮创建一个水平布局，使其右对齐
         button_layout = QHBoxLayout()
@@ -1887,19 +1916,49 @@ class Command_Windows(QWidget):
             self.value_input.clear()
             self.value_input.setPlaceholderText("该命令无需参数。")
 
+    # 从密码文件加载密码
+    def load_password_from_file(self):
+        # 如果密码文件存在，则尝试读取密码
+        if self.password_file and os.path.exists(self.password_file):
+            try:
+                with open(self.password_file, 'r', encoding='utf-8') as f:
+                    self.password = f.readline().strip()
+                if self.password:
+                    self.main_window.debug_info(f"[成功] 已加载密码文件")
+                else:
+                    self.main_window.debug_info(f"[警告] 命令密码文件为空")
+            except Exception as e:
+                self.main_window.debug_info(f"[错误] 读取命令密码文件失败: {e}")
+                self.password = ""
+        else:
+            self.main_window.debug_info("[警告] 命令密码文件不存在")
+            self.password = ""
+
     # 发送预设的结构化命令
     def send_structured_command(self):
         index = self.cmd_combo.currentIndex()
         command, has_value = self.cmd_combo.itemData(index)
+
+        # 如果没有选择命令，直接返回
         if not command:
             return
 
+        # 如果没有密码，直接拒绝发送并给出警告
+        if not self.password:
+            QMessageBox.warning(self, "警告", "命令密码文件不存在")
+            return
+
+        # 如果命令需要参数，检查输入框是否为空
         value = self.value_input.text().strip()
         if has_value and not value:
             QMessageBox.warning(self, "警告", "该命令需要输入参数值。")
             return
 
-        full_command = f"@@{command},{value}\n" if has_value else f"@@{command}\n"
+        # 无论是否有参数，都附加密码
+        if has_value:
+            full_command = f"@@{command},{value},{self.password}\n"
+        else:
+            full_command = f"@@{command},{self.password}\n"
         self.tx_message.emit(full_command)
 
     # 发送自由命令
@@ -1910,6 +1969,24 @@ class Command_Windows(QWidget):
             return
 
         self.tx_message.emit(command_text + '\n')
+
+    # 选择密码文件并更新配置文件
+    def select_password_file(self):
+        file_dialog = QFileDialog(self)
+        file_path, _ = file_dialog.getOpenFileName(self, "选择密码文件", "", "密码文件 (*.pwd);;所有文件 (*)")
+        if file_path:
+            self.password_file = file_path
+            self.pwd_file_input.setText(os.path.basename(file_path)) 
+            self.load_password_from_file() # 重新加载密码
+
+            # 保存到配置文件
+            if not config.has_section("GroundStation"):
+                config.add_section("GroundStation")
+            config.set("GroundStation", "CommandPasswordFile", file_path)
+            with open("config.ini", "w") as configfile:
+                config.write(configfile)
+            
+            self.main_window.debug_info(f"命令密码已选择")
 
 # 串口连接线程
 class SerialConnection(QThread):

@@ -53,6 +53,7 @@ typedef enum {
 
     // --- 指令应答状态码 (ACK/NACK) (0x50xx, 0x51xx) ---
     // 通用否定应答 (NACK)
+    CMD_NACK_INVALID_PWD     = 0x5018, // 命令密码无效
     CMD_NACK_FORMAT_ERROR    = 0x5001, // 指令格式错误
     CMD_NACK_NO_VALUE        = 0x5002, // 指令缺少参数
     CMD_NACK_INVALID_TYPE    = 0x5003, // 指令类型无效
@@ -66,7 +67,7 @@ typedef enum {
     CMD_NACK_SET_SSDV_CYCLE  = 0x500B, // 图传周期无效
     CMD_NACK_SET_SSDV_TYPE   = 0x5016, // 图传模式无效
     CMD_NACK_SET_SSDV_PRESET = 0x5017, // 图传预设无效
-    
+
     // 控制 (CTL) 命令应答 (ACK)
     CMD_ACK_RELAY_ON         = 0x500C, // 中继功能已开启
     CMD_ACK_RELAY_OFF        = 0x500D, // 中继功能已关闭

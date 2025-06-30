@@ -15,7 +15,7 @@
  */
 
 // 系统开发状态
-#define DEBUG_MODE true                
+#define DEBUG_MODE false                
 
 /* --- 综合头文件 --- */
 
@@ -778,7 +778,7 @@ static void Handle_SET_Command(const char *target, const char *value) {
       int preset = atoi(value);
 
       // 合法性校验
-      if (preset > 0 && preset <= 2) {
+      if (preset > 0 && preset <= 3) {
         temp_config.ssdvPresetMode = preset;
         config_changed = true;
         Transmit_Status(CMD_ACK_SSDV_PRESET, preset);
@@ -815,6 +815,14 @@ void Process_Command(const char *cmd) {
   char *type = strtok_r(buffer, ",", &saveptr);
   char *target = strtok_r(NULL, ",", &saveptr);
   char *value = strtok_r(NULL, ",", &saveptr);
+  //char *password = strtok_r(NULL, ",", &saveptr);
+
+  /* 可选：上行命令加密
+  if (strcmp(password, "<Password>") != 0) {
+    Transmit_Status(CMD_NACK_INVALID_PWD);
+    return;
+  }
+  */
 
   if (!type || !target) {
     Transmit_Status(CMD_NACK_FORMAT_ERROR);
@@ -1234,13 +1242,13 @@ void V_SSDV_Task(void *pvParameters) {
         esp_task_wdt_reset();
     }
 
+    // 图像编码并发送完成，发送结束标识，并附带图像编号
+    Transmit_Status(SSDV_ENCODE_END, ssdvImageId - 1);
+
     // 增加一个额外的延时，以确保物理串口的硬件发送缓冲区有足够的时间将最后一个数据包完全发出。
     // 对于 9600 波特率，发送一个 256 字节的数据包大约需要 256 * 10 / 9600 ≈ 267ms。
     // 因此，一个 300ms 到 500ms 的延时是比较安全的。
     vTaskDelay(pdMS_TO_TICKS(500)); 
-
-    // 图像编码并发送完成，发送结束标识，并附带图像编号
-    Transmit_Status(SSDV_ENCODE_END, ssdvImageId - 1);
 
     // 修改 SSDV 发送状态至 False，允许 SET/CTL 命令的执行。
     Update_System_Status(SSDV_TRANSMITTING_STATUS, false);

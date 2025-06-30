@@ -78,7 +78,6 @@
 
 /* --- 固件参数与宏定义 --- */
 #define CALLSIGN             "BG7ZDQ"            // 气球呼号
-#define DEBUG_MODE           true                // 系统开发状态
 
 // RTOS 相关参数
 #define RTOS_STACK_SIZE      4096                // 默认 RTOS 任务堆栈大小
