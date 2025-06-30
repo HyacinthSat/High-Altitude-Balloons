@@ -1106,6 +1106,10 @@ void Process_SSDV_Packet(camera_fb_t *fb, const SystemConfig_t* local_config) {
   uint8_t ssdv_feed_buffer[SSDV_FEED_BUFF_SIZE];
   int index = 0, c = 0, packet_count = 0;
 
+  // 局部保护机制变量
+  unsigned long start_time = millis();
+  int feed_me_counter = 0;
+
   // 初始化 SSDV 配置结构，默认为无 FEC 模式，质量等级 2，每帧长 256 字节
   ssdv_enc_init(&ssdv, local_config->ssdvPacketType, (char *)CALLSIGN, ssdvImageId++, local_config->ssdvEncodingQuality, SSDV_SIZE_NOFEC);
 
@@ -1118,12 +1122,26 @@ void Process_SSDV_Packet(camera_fb_t *fb, const SystemConfig_t* local_config) {
     // 喂狗
     esp_task_wdt_reset();
 
+    // 检查是否处理超时
+    if (millis() - start_time > 50000) {
+      Transmit_Status(SSDV_ENCODE_ERROR, "Timeout");
+      return;
+    }
+
     // 当状态为 SSDV_FEED_ME 时投喂数据
     while ((c = ssdv_enc_get_packet(&ssdv)) == SSDV_FEED_ME) {
+      // 防卡死检查
+      feed_me_counter++;
+      if (feed_me_counter > 100) {
+        Transmit_Status(SSDV_ENCODE_ERROR, "FEED");
+        return;
+      }
       int bytes_read_from_image = Read_Image_Buffer(ssdv_feed_buffer, sizeof(ssdv_feed_buffer), fb, index);
       if (bytes_read_from_image > 0) {
         index += bytes_read_from_image;
         ssdv_enc_feed(&ssdv, ssdv_feed_buffer, bytes_read_from_image);
+        // 重置喂食计数器
+        feed_me_counter = 0;
       }
     }
 
@@ -1150,7 +1168,7 @@ void Process_SSDV_Packet(camera_fb_t *fb, const SystemConfig_t* local_config) {
     }
 
     // 短暂延时，让出CPU给其他任务
-    vTaskDelay(pdMS_TO_TICKS(20));
+    vTaskDelay(pdMS_TO_TICKS(50));
 
     packet_count++;
   }
