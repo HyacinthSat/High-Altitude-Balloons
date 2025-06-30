@@ -15,7 +15,7 @@
  */
 
 // 系统开发状态
-#define DEBUG_MODE false                
+#define DEBUG_MODE false
 
 /* --- 综合头文件 --- */
 
@@ -32,7 +32,7 @@ SystemConfig_t g_systemConfig = {
   .ssdvPacketType      = SSDV_TYPE_NOFEC,  // 默认 SSDV 数据类型: NOFEC
   .ssdvEncodingQuality = 2,                // 默认 SSDV 编码质量: 2
   .ssdvCycleTimeSec    = 60,               // 默认 SSDV 发送周期: 60
-  .ssdvPresetMode   = 0,                // 默认 SSDV 预设照片: 0 (无预设)
+  .ssdvPresetMode      = 0,                // 默认 SSDV 预设照片: 0 (无预设)
 };
 
 // 定义并初始化系统实时状态变量
@@ -811,19 +811,37 @@ void Process_Command(const char *cmd) {
   buffer[MAX_RX_BUFF_SIZE - 1] = '\0';
   
   // 解析命令字段
-  char *saveptr;
-  char *type = strtok_r(buffer, ",", &saveptr);
-  char *target = strtok_r(NULL, ",", &saveptr);
-  char *value = strtok_r(NULL, ",", &saveptr);
-  //char *password = strtok_r(NULL, ",", &saveptr);
+  char *type = NULL;
+  char *target = NULL;
+  char *value = NULL;
 
-  /* 可选：上行命令加密
+  /* 上行密码校验：可选
+  char *password = NULL;
+
+  // 查找最后一个逗号，从末尾提取密码
+  char *last_comma = strrchr(buffer, ',');
+  if (last_comma != NULL) {
+    *last_comma = '\0';
+    password = last_comma + 1;
+  } else {
+    Transmit_Status(CMD_NACK_FORMAT_ERROR);
+    return;
+  }
+
+  // 检查密码是否正确
   if (strcmp(password, "<Password>") != 0) {
     Transmit_Status(CMD_NACK_INVALID_PWD);
     return;
   }
   */
 
+  // 使用 strtok_r 从字符串开头解析剩余部分
+  char *saveptr;
+  type = strtok_r(buffer, ",", &saveptr);
+  target = strtok_r(NULL, ",", &saveptr);
+  value = strtok_r(NULL, ",", &saveptr);
+
+  // 检查命令格式是否正确
   if (!type || !target) {
     Transmit_Status(CMD_NACK_FORMAT_ERROR);
     return;
@@ -1375,7 +1393,7 @@ void setup() {
   pinMode(BUZZER, OUTPUT);                     // 配置告警 IO
   digitalWrite(BUZZER, LOW);                   // 初始化为低电平
   Serial.begin(9600);                          // 设置主串口波特率
-  GPS_Serial.begin(9600, SERIAL_8N1, 15, -1);  // 设置 GPS 串口
+  GPS_Serial.begin(38400, SERIAL_8N1, 15, -1); // 设置 GPS 串口
   Setup_SPIFFS();                              // 挂载 SPIFFS
   WiFi.mode(WIFI_OFF);                         // 关闭 Wi-Fi
   btStop();                                    // 关闭 蓝牙

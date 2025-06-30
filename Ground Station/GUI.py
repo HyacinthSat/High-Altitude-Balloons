@@ -158,6 +158,7 @@ class GUI(QWidget):
             0x500B: ("[拒绝] 图传周期无效", None, None),
             0x5016: ("[拒绝] 图传模式无效", None, None),
             0x5017: ("[拒绝] 图传预设无效", None, None),
+            0x5018: ("[拒绝] 命令密码无效", None, None),
             # CTL ACK
             0x500C: ("[应答] 中继功能已开启", None, None),
             0x500D: ("[应答] 中继功能已关闭", None, None),
@@ -1085,7 +1086,7 @@ class GUI(QWidget):
     def translate_payload(self, status_code, payload):
         
         # 处理摄像头尺寸相关的状态码
-        if status_code in [0x5104, 0x5013]:
+        if status_code in [0x5013, 0x5105]:
             return self.CAM_SIZE_MAP.get(payload, payload)
             
         # 处理SSDV类型相关的状态码
