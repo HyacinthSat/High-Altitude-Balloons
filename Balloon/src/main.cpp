@@ -544,10 +544,10 @@ static void Handle_GET_Command(const char *target) {
     GET_System_Status(&local_status);
     SystemConfig_t local_config;
     GET_System_Config(&local_config);
-    Transmit_Status(CMD_ACK_GET_SSDV_STATUS, local_status.isSsdvEnabled);
-    Transmit_Status(CMD_ACK_GET_SSDV_CYCLE, local_config.ssdvCycleTimeSec);
+    Transmit_Status(CMD_ACK_GET_SSDV_STATUS, (int)local_status.isSsdvEnabled);
+    Transmit_Status(CMD_ACK_GET_SSDV_CYCLE, (int)local_config.ssdvCycleTimeSec);
     Transmit_Status(CMD_ACK_GET_SSDV_TYPE, local_config.ssdvPacketType);
-    Transmit_Status(CMD_ACK_GET_SSDV_QUALITY, local_config.ssdvEncodingQuality);
+    Transmit_Status(CMD_ACK_GET_SSDV_QUALITY, (int)local_config.ssdvEncodingQuality);
     return;
   }
 

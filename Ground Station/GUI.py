@@ -9,8 +9,8 @@ The program real-time parses and displays the balloon's GPS information, integra
 providing a comprehensive ground monitoring and data visualization solution for HAB missions.
 
 Author: BG7ZDQ
-Date: 2025/06/12
-Version: 0.1.0
+Date: 2025/07/01
+Version: 0.1.1
 LICENSE: GNU General Public License v3.0
 """
 
@@ -75,7 +75,7 @@ class GUI(QWidget):
         self.setWindowIcon(icon)
         self.resize(800, 510)
         self.setFixedSize(800, 510)
-        self.setWindowTitle('气球地面站：The Ground Station Software of HAB')
+        self.setWindowTitle('气球地面站：The Ground Station Software of HAB | By BG7ZDQ | Ver 0.1.1')
         self.setStyleSheet('QWidget { background-color: rgb(223,237,249); }')
 
         # 线程占位符
@@ -694,7 +694,7 @@ class GUI(QWidget):
                     f"{self.local_alt}",           # 地面站高度
                     "normal"                       # 开发状态
                 ]
-                subprocess.Popen(command_args)
+                subprocess.Popen(command_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
             except Exception as e:
                 self.debug_info(f"SondeHub上传失败: {e}")
                 return False
@@ -812,9 +812,20 @@ class GUI(QWidget):
         self.SSDV_name_output.setText(f"{self.filename}")
         self.SSDV_name_output.adjustSize()
         
-        # 确保 'dat' 文件夹存在并将接收到的数据进行存储
-        os.makedirs("dat", exist_ok=True)
-        dat_filepath = f"dat/{self.filename}.dat"
+        # 定义并创建 SSDV 根目录
+        user_home = os.path.expanduser('~')
+        user_desktop_path = os.path.join(user_home, 'Desktop')
+        ssdv_base_dir = os.path.join(user_desktop_path, 'SSDV')
+        os.makedirs(ssdv_base_dir, exist_ok=True)
+
+        # 定义并创建 .dat 文件的存储目录
+        dat_output_dir = os.path.join(ssdv_base_dir, 'dat')
+        os.makedirs(dat_output_dir, exist_ok=True)
+
+        # 构造完整路径
+        dat_filepath = os.path.join(dat_output_dir, f"{self.filename}.dat")
+        output_jpg_path = os.path.join(ssdv_base_dir, f"{self.filename}.jpg")
+        
         try:
             with open(dat_filepath, "ab") as f:
                 f.write(frame)
@@ -823,7 +834,6 @@ class GUI(QWidget):
             return False
 
         # 启动一个工作线程来解码 SSDV，避免阻塞 UI
-        output_jpg_path = f"{self.filename}.jpg"
         self.decoder_thread = SsdvDecoderThread(dat_filepath, output_jpg_path, self)
         
         # 连接解码完成信号到处理结果的槽
@@ -1028,7 +1038,8 @@ class GUI(QWidget):
         def angle_diff_sign(a, b):
             diff = (a - b + 180) % 360 - 180
             return diff
-            
+
+        '''
         # 环绕角平滑滤波 (AZ)
         # AZ 轴受到的主要影响为平面差距过小以及定位数据错误带来的剧烈变化
         def angle_smooth(old_angle, new_angle, current_elevation, alpha=0.3):
@@ -1054,28 +1065,14 @@ class GUI(QWidget):
             
             # 对所有有效数据进行平滑处理
             return alpha * new_val + (1 - alpha) * old_val
+        '''
         
         # 无论如何，先计算出原始的方位角和俯仰角
         ecef_local = geodetic_to_ecef(self.local_lat, self.local_lng, self.local_alt)
         ecef_balloon = geodetic_to_ecef(new_balloon_lat, new_balloon_lng, new_balloon_alt)
         enu = ecef_to_enu(ecef_balloon, ecef_local, self.local_lat, self.local_lng)
         azimuth, elevation = enu_to_az_el(enu)
-
-        # 只有当目标出现在地平线1度以上时才启动跟踪。
-        if elevation > 1.0:
-            # 传入当前计算出的俯仰角用于天顶判断
-            azimuth_smoothed = angle_smooth(self.Rotator_AZ, azimuth, elevation)
-            elevation_smoothed = linear_smooth(self.Rotator_EL, elevation)
-            return azimuth_smoothed, elevation_smoothed
-        
-        # 如果目标在地平线以下，则旋转器按兵不动，保持零位
-        else:
-            # 如果旋转器当前不在待命位置，则命令其进入待命位置
-            if self.Rotator_AZ != 0.00 or self.Rotator_EL != 00.00:
-                return 0.00, 00.00
-            # 如果已经在待命位置，就保持不动
-            else:
-                return self.Rotator_AZ, self.Rotator_EL
+        return azimuth, elevation
 
     # 更新气球在地图中的位置
     def update_map_position(self):
@@ -1319,7 +1316,7 @@ class QSO_Windows(QWidget):
 
         # 构建信息用的参数
         self.ToCallSign = "CQ"
-        self.ToMSG = ""
+        self.ToMSG = "测试"
 
         # 拼装后的信息
         self.TofullMSG = ""
@@ -1480,7 +1477,7 @@ class QSO_Windows(QWidget):
 
         # 实时时钟
         self.clock_label = QLabel(self)
-        self.clock_label.setGeometry(490, 150, 250, 60)
+        self.clock_label.setGeometry(510, 150, 250, 60)
         self.clock_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.clock_label.setStyleSheet('color: #3063AB; font-family: 微软雅黑; font: bold 30pt; border: none;')
 
@@ -1699,16 +1696,15 @@ class QSO_Windows(QWidget):
         # 获取源呼号和目标呼号
         FmCallsign = self.info_table.item(row, 1).text()
         ToCallsign = self.info_table.item(row, 2).text()
-        MSG = self.info_table.item(row, 3).text()
 
-        # 当对方在CQ时，回复73,QSL?
+        # 当对方在CQ时
         if (FmCallsign != self.callsign and ToCallsign == "CQ"):
             self.Callsign_input.setText(FmCallsign)
-            self.MSG_input.setText("73")
-        # 当对方回复我的CQ时(即73,QSL?)，回复RR73 QSL.
-        elif (FmCallsign != self.callsign and ToCallsign == self.callsign and len(MSG) > 6 and MSG.endswith(",73")):
+            self.MSG_input.setText("73, QSL?")
+        # 当对方回复我时
+        elif (FmCallsign != self.callsign and ToCallsign == self.callsign):
             self.Callsign_input.setText(FmCallsign)
-            self.MSG_input.setText("RR73")
+            self.MSG_input.setText("RR73, TNX!")
         else:
             if FmCallsign != self.callsign:
                 self.Callsign_input.setText(FmCallsign)
@@ -2077,7 +2073,8 @@ class SsdvDecoderThread(QThread):
                 ["./ssdv", "-d", self.dat_filepath, self.jpg_filepath],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
-                check=True
+                check=True,
+                creationflags=subprocess.CREATE_NO_WINDOW
             )
 
             self.decoding_finished.emit(self.jpg_filepath)
