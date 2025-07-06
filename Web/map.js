@@ -16,7 +16,7 @@ let BalloonIcon = new BMap.Icon("favicon.ico", new BMap.Size(64, 64), {
 
 
 // 设置地图中心点和缩放级别
-map.centerAndZoom(new BMap.Point(110.33, 20.06), 15);
+map.centerAndZoom(new BMap.Point(110.33, 20.06), 14);
 map.enableScrollWheelZoom();
 
 /**
