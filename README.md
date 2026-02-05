@@ -11,28 +11,28 @@
 
 飞行数据仪表板: [hab.satellites.ac.cn](https://hab.satellites.ac.cn/)  
 
-## ✨ 项目功能  
+## 项目功能  
 
 - **实时遥测与追踪**：通过地面站实时接收、解析并展示气球的 GPS 位置、高度、速度、航向等关键遥测数据  
 - **图像拍摄与回传**：支持将机载摄像头拍摄的图像通过 SSDV 协议进行编码和下传，并在地面站实时解码显示  
 - **业余无线电通信**：集成数字中继功能，允许业余无线电爱好者通过气球作为数字中继进行远距离的通信实验  
 - **Web 数据仪表板**：提供集成仪表板，整合了 SondeHub 实时追踪、飞行轨迹预测和遥测数据可视化图表  
 
-## 📸 系统展示  
+## 系统展示  
 
-- **🎈 气球载荷**  
+- **气球载荷**  
 ![Balloon_PCB_仿真](./Image/Balloon_PCB.jpeg)  
 
-- **⚙️ 可配置数传单元**  
+- **可配置数传单元**  
 ![CDTU_装配](./Image/CDTU_Assembly.png)
 
-- **📡 地面站程序**  
+- **地面站程序**  
 ![Ground_Station](./Image/Ground_Station.png)
 
-## 🛠️ 系统架构  
+## 系统架构  
 整个项目由三个主要部分组成：  
 
-1. **🎈 [Balloon | 气球载荷](./Balloon)**  
+1. **[Balloon | 气球载荷](./Balloon)**  
 气球飞行的核心控制器，负责所有机载任务。
 
 - `/Balloon.h`: 定义了外设（如摄像头、传感器）的硬件引脚  
@@ -41,7 +41,7 @@
 - `/rs8.c` & `/rs8.h`: Reed-Solomon 前向错误校验库，为 SSDV 数据包提供容错能力，来自 [fsphil ssdv](https://github.com/fsphil/ssdv/)  
 - `/Balloon_PCB_Ver_1.0.3.zip`: 气球端的电路设计，PCB制版文件、预览图片及其3D模型。使用立创 EDA 绘制  
 
-2. **⚙️ [CDTU | 可配置数传单元](./CDTU)**  
+2. **[CDTU | 可配置数传单元](./CDTU)**  
 基于 RP2040-Zero 的智能数传模块控制器。  
 
 - `/main.py`: 运行在 RP2040-Zero 上的核心程序。它将普通的 HC-12 数传模块升级为一个智能可配置的数传单元，实现了：  
@@ -52,7 +52,7 @@
 
 - `CDTU_PCB_Ver_1.0.1.zip`: CDTU 的电路设计，PCB制版文件、预览图片及其3D模型。使用立创 EDA 绘制  
 
-3. **📡 [Ground Station | 地面站](./Ground%20Station)**  
+3. **[Ground Station | 地面站](./Ground%20Station)**  
 功能强大的图形化地面站软件，是数据接收、状态监控和任务执行的控制中心。  
 
 - `/GUI.py`: 基于 PyQt6 的地面站图形化主程序。 它负责：  
@@ -73,18 +73,18 @@
         * `coordtransform.js`: 用于在不同地理坐标系之间转换的库，确保地图定位准确  
         * `index.html`: 项目主数据面板，简单整合了 SondeHub 实时追踪、飞行预测和 Grafana 遥测仪表盘  
 
-## 🚀 使用说明  
+## 使用说明  
 
 1. **Ground Station | 地面站**  
 - 运行环境:  
   - Python 3.11.0 及 相关依赖库：  
   (`pip install PyQt6 PyQt6-WebEngine pyserial numpy`)  
 
-## 🔔 注意事项  
+## 注意事项  
 
 地面站程序使用了百度地图api，您可以直接使用 [https://hab.satellites.ac.cn/map](https://hab.satellites.ac.cn/map) ，或者将 `Ground Station/web` 目录下的内容托管到自己的服务器。  
 
-## ‍⚖️ 开源许可  
+##开源许可  
 
 本仓库在 MIT 许可证下发布。  
 这意味着：  
