@@ -84,7 +84,7 @@
 
 地面站程序使用了百度地图api，您可以直接使用 [https://hab.satellites.ac.cn/map](https://hab.satellites.ac.cn/map) ，或者将 `Ground Station/web` 目录下的内容托管到自己的服务器。  
 
-##开源许可  
+## 开源许可  
 
 本仓库在 MIT 许可证下发布。  
 这意味着：  
